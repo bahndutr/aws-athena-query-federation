@@ -292,7 +292,10 @@ public abstract class MetadataHandler
             OutputStream outputStream)
             throws Exception
     {
-        logger.info("doHandleRequest: request[{}]", req);
+        logger.info("=== LAMBDA METADATA REQUEST RECEIVED ===");
+        logger.info("Request type: {}", req.getRequestType());
+        logger.info("Request details: {}", req);
+        
         MetadataRequestType type = req.getRequestType();
         switch (type) {
             case LIST_SCHEMAS:
