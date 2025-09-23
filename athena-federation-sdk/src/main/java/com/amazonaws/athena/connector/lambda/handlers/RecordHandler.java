@@ -151,6 +151,10 @@ public abstract class RecordHandler
         try (BlockAllocator allocator = new BlockAllocatorImpl()) {
             ObjectMapper objectMapper = VersionedObjectMapperFactory.create(allocator);
             try (FederationRequest rawReq = objectMapper.readValue(inputStream, FederationRequest.class)) {
+                logger.info("=== LAMBDA REQUEST RECEIVED ===");
+                logger.info("Request type: {}", rawReq.getClass().getSimpleName());
+                logger.info("Request details: {}", rawReq);
+                
                 if (rawReq instanceof PingRequest) {
                     try (PingResponse response = doPing((PingRequest) rawReq)) {
                         assertNotNull(response);
