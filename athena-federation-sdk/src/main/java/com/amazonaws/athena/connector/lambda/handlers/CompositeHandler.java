@@ -118,6 +118,10 @@ public class CompositeHandler
             }
 
             logger.info("Parsing request with resolvedSerDeVersion: '{}', connector SerDeVersion: '{}'", resolvedSerDeVersion, SerDeVersion.SERDE_VERSION);
+            
+            logger.info("=== LAMBDA REQUEST RECEIVED ===");
+            logger.info("Request type: {}", rawReq.getClass().getSimpleName());
+            logger.info("Request details: {}", rawReq);
 
             if (rawReq instanceof MetadataRequest) {
                 ((MetadataRequest) rawReq).setContext(context);
