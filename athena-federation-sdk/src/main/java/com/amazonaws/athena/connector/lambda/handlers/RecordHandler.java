@@ -178,17 +178,7 @@ public abstract class RecordHandler
             OutputStream outputStream)
             throws Exception
     {
-        logger.info("=== LAMBDA REQUEST RECEIVED ===");
-        logger.info("Request type: {}", req.getRequestType());
-        logger.info("Request details: {}", req);
-        if (req instanceof ReadRecordsRequest) {
-            ReadRecordsRequest readReq = (ReadRecordsRequest) req;
-            logger.info("Query ID: {}", readReq.getQueryId());
-            logger.info("Catalog: {}, Table: {}", readReq.getCatalogName(), readReq.getTableName());
-            logger.info("Schema fields: {}", readReq.getSchema().getFields().size());
-            logger.info("Split properties: {}", readReq.getSplit().getProperties());
-        }
-        
+        logger.info("doHandleRequest: request[{}]", req);
         RecordRequestType type = req.getRequestType();
         switch (type) {
             case READ_RECORDS:
