@@ -24,6 +24,8 @@ import com.amazonaws.athena.connector.lambda.domain.predicate.Constraints;
 import com.amazonaws.athena.connectors.jdbc.manager.FederationExpressionParser;
 import com.amazonaws.athena.connectors.jdbc.manager.JdbcSplitQueryBuilder;
 import com.google.common.base.Strings;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.List;
@@ -37,6 +39,7 @@ import java.util.Set;
 public class OracleQueryStringBuilder
         extends JdbcSplitQueryBuilder
 {
+    private static final Logger LOGGER = LoggerFactory.getLogger(OracleQueryStringBuilder.class);
     public OracleQueryStringBuilder(final String quoteCharacter, final FederationExpressionParser federationExpressionParser)
     {
         super(quoteCharacter, federationExpressionParser);
@@ -45,6 +48,9 @@ public class OracleQueryStringBuilder
     @Override
     protected String getFromClauseWithSplit(String catalog, String schema, String table, Split split)
     {
+        LOGGER.info("=== ORACLE FROM CLAUSE GENERATION ===");
+        LOGGER.info("Building FROM clause for table: {}.{}.{}", catalog, schema, table);
+        
         StringBuilder tableName = new StringBuilder();
         if (!Strings.isNullOrEmpty(catalog)) {
             tableName.append(quote(catalog)).append('.');
@@ -55,15 +61,20 @@ public class OracleQueryStringBuilder
         tableName.append(quote(table));
 
         String partitionName = split.getProperty(OracleMetadataHandler.BLOCK_PARTITION_COLUMN_NAME);
+        LOGGER.info("Partition name from split: {}", partitionName);
 
         if (OracleMetadataHandler.ALL_PARTITIONS.equals(partitionName)) {
             // No partitions
-            return String.format(" FROM %s ", tableName);
+            String fromClause = String.format(" FROM %s ", tableName);
+            LOGGER.info("Oracle FROM clause (no partitions): {}", fromClause);
+            return fromClause;
         }
 
         Set<String> partitionVals = split.getProperties().keySet();
         String partValue = split.getProperty(partitionVals.iterator().next());
-        return String.format(" FROM %s ", tableName + " " + "PARTITION " + "(" + partValue + ")");
+        String fromClause = String.format(" FROM %s ", tableName + " " + "PARTITION " + "(" + partValue + ")");
+        LOGGER.info("Oracle FROM clause (with partition): {}", fromClause);
+        return fromClause;
     }
 
     @Override

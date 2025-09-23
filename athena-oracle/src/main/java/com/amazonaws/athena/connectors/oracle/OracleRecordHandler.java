@@ -90,16 +90,26 @@ public class OracleRecordHandler
     public PreparedStatement buildSplitSql(Connection jdbcConnection, String catalogName, TableName tableName, Schema schema, Constraints constraints, Split split)
             throws SQLException
     {
+        LOGGER.info("=== ORACLE RECORD HANDLER ===");
+        LOGGER.info("Building SQL for table: {}.{}", tableName.getSchemaName(), tableName.getTableName());
+        LOGGER.info("Query passthrough: {}", constraints.isQueryPassThrough());
+        
+        long startTime = System.currentTimeMillis();
         PreparedStatement preparedStatement;
 
         if (constraints.isQueryPassThrough()) {
+            LOGGER.info("Using query passthrough approach");
             preparedStatement = buildQueryPassthroughSql(jdbcConnection, constraints);
         }
         else {
+            LOGGER.info("Using Oracle JDBC split query builder");
             preparedStatement = jdbcSplitQueryBuilder.buildSql(jdbcConnection, null, tableName.getSchemaName(), tableName.getTableName(), schema, constraints, split);
         }
         // Disable fetching all rows.
         preparedStatement.setFetchSize(FETCH_SIZE);
+        
+        long buildTime = System.currentTimeMillis() - startTime;
+        LOGGER.info("Oracle SQL build completed in {} ms with fetch size: {}", buildTime, FETCH_SIZE);
 
         return preparedStatement;
     }
