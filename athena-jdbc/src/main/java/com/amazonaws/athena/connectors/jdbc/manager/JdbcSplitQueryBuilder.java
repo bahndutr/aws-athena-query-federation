@@ -130,28 +130,46 @@ public abstract class JdbcSplitQueryBuilder
             final String columnNames)
             throws SQLException
     {
+        LOGGER.info("=== JDBC QUERY BUILDER DETAILS ===");
+        LOGGER.info("Target table: {}.{}.{}", catalog, schema, table);
+        LOGGER.info("Selected columns: {}", columnNames);
+        LOGGER.info("=== TRADITIONAL CONSTRAINT PROCESSING ===");
+        
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT ");
         sql.append(columnNames);
 
         if (columnNames.isEmpty()) {
             sql.append("null");
+            LOGGER.info("No columns selected, using null");
         }
-        sql.append(getFromClauseWithSplit(catalog, schema, table, split));
+        
+        String fromClause = getFromClauseWithSplit(catalog, schema, table, split);
+        sql.append(fromClause);
+        LOGGER.info("FROM clause: {}", fromClause);
 
         List<TypeAndValue> accumulator = new ArrayList<>();
 
         List<String> clauses = toConjuncts(tableSchema.getFields(), constraints, accumulator, split.getProperties());
-        clauses.addAll(getPartitionWhereClauses(split));
+        LOGGER.info("Generated WHERE clauses from constraints: {}", clauses);
+        
+        List<String> partitionClauses = getPartitionWhereClauses(split);
+        clauses.addAll(partitionClauses);
+        LOGGER.info("Added partition WHERE clauses: {}", partitionClauses);
+        
         if (!clauses.isEmpty()) {
-            sql.append(" WHERE ")
-                    .append(Joiner.on(" AND ").join(clauses));
+            String whereClause = " WHERE " + Joiner.on(" AND ").join(clauses);
+            sql.append(whereClause);
+            LOGGER.info("Complete WHERE clause: {}", whereClause);
+        } else {
+            LOGGER.info("No WHERE clauses generated");
         }
 
         String orderByClause = extractOrderByClause(constraints);
 
         if (!Strings.isNullOrEmpty(orderByClause)) {
             sql.append(" ").append(orderByClause);
+            LOGGER.info("ORDER BY clause: {}", orderByClause);
         }
 
         if (constraints.getLimit() > 0) {
@@ -160,7 +178,9 @@ public abstract class JdbcSplitQueryBuilder
         else {
             sql.append(appendLimitOffset(split)); // legacy method to preserve functionality of existing connector impls
         }
-        LOGGER.info("Generated SQL : {}", sql.toString());
+        
+        LOGGER.info("=== FINAL GENERATED SQL ===");
+        LOGGER.info("Final SQL query: {}", sql.toString());
         PreparedStatement statement = jdbcConnection.prepareStatement(sql.toString());
         // TODO all types, converts Arrow values to JDBC.
         for (int i = 0; i < accumulator.size(); i++) {

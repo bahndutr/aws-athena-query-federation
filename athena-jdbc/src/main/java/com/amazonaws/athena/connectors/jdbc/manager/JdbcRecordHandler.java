@@ -151,10 +151,15 @@ public abstract class JdbcRecordHandler
     public void readWithConstraint(BlockSpiller blockSpiller, ReadRecordsRequest readRecordsRequest, QueryStatusChecker queryStatusChecker)
             throws Exception
     {
-        LOGGER.info("{}: Catalog: {}, table {}, splits {}", readRecordsRequest.getQueryId(), readRecordsRequest.getCatalogName(), readRecordsRequest.getTableName(),
-                readRecordsRequest.getSplit().getProperties());
+        LOGGER.info("Processing query {} for table {}.{}", 
+            readRecordsRequest.getQueryId(), readRecordsRequest.getCatalogName(), readRecordsRequest.getTableName());
+        LOGGER.info("Split properties: {}", readRecordsRequest.getSplit().getProperties());
+        
+        long startTime = System.currentTimeMillis();
+        
         try (Connection connection = this.jdbcConnectionFactory.getConnection(getCredentialProvider())) {
             String databaseProductName = connection.getMetaData().getDatabaseProductName();
+            LOGGER.info("Database product: {}", databaseProductName);
 
             // clickhouse does not support disabling auto-commit
             if (!CLICKHOUSE_DB.equalsIgnoreCase(databaseProductName)) {
@@ -163,9 +168,14 @@ public abstract class JdbcRecordHandler
 
             enableCaseSensitivelyLookUpSession(connection); // For certain connectors, we require to apply session config first to enable case
 
+            long queryBuildStart = System.currentTimeMillis();
             try (PreparedStatement preparedStatement = buildSplitSql(connection, readRecordsRequest.getCatalogName(), readRecordsRequest.getTableName(),
                     readRecordsRequest.getSchema(), readRecordsRequest.getConstraints(), readRecordsRequest.getSplit());
                     ResultSet resultSet = preparedStatement.executeQuery()) {
+                
+                long queryBuildTime = System.currentTimeMillis() - queryBuildStart;
+                LOGGER.info("Query build and execution time: {} ms", queryBuildTime);
+                
                 Map<String, String> partitionValues = readRecordsRequest.getSplit().getProperties();
 
                 GeneratedRowWriter.RowWriterBuilder rowWriterBuilder = GeneratedRowWriter.newBuilder(readRecordsRequest.getConstraints());
@@ -182,12 +192,15 @@ public abstract class JdbcRecordHandler
                 int rowsReturnedFromDatabase = 0;
                 while (resultSet.next()) {
                     if (!queryStatusChecker.isQueryRunning()) {
+                        LOGGER.info("Query cancelled after processing {} rows", rowsReturnedFromDatabase);
                         return;
                     }
                     blockSpiller.writeRows((Block block, int rowNum) -> rowWriter.writeRow(block, rowNum, resultSet) ? 1 : 0);
                     rowsReturnedFromDatabase++;
                 }
-                LOGGER.info("{} rows returned by database.", rowsReturnedFromDatabase);
+                
+                long totalTime = System.currentTimeMillis() - startTime;
+                LOGGER.info("Query completed: {} rows processed in {} ms", rowsReturnedFromDatabase, totalTime);
 
                 // clickhouse does not support commit/rollback, so skip commit() for clickhouse
                 if (!CLICKHOUSE_DB.equalsIgnoreCase(databaseProductName)) {
