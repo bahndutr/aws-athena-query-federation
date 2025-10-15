@@ -156,7 +156,19 @@ public abstract class JdbcSplitQueryBuilder
             LOGGER.info("Query plan size: {} bytes", constraints.getQueryPlan().getSubstraitPlan().length());
             SqlDialect sqlDialect = getSqlDialect();
             LOGGER.info("SQL dialect: {}", sqlDialect.getClass().getSimpleName());
-            return prepareStatementWithSqlDialect(jdbcConnection, constraints, sqlDialect, split, catalog, schema, table, columnNames, tableSchema);
+            
+            try {
+                return prepareStatementWithSqlDialect(jdbcConnection, constraints, sqlDialect, split, catalog, schema, table, columnNames, tableSchema);
+            }
+            catch (RuntimeException e) {
+                if (e.getMessage() != null && e.getMessage().contains("Table") && e.getMessage().contains("not found")) {
+                    LOGGER.warn("Substrait table resolution failed, falling back to traditional constraint processing: {}", e.getMessage());
+                    // Fall through to traditional processing
+                }
+                else {
+                    throw e; // Re-throw other errors
+                }
+            }
         }
 
         LOGGER.info("=== TRADITIONAL CONSTRAINT PROCESSING ===");
@@ -186,7 +198,8 @@ public abstract class JdbcSplitQueryBuilder
             String whereClause = " WHERE " + Joiner.on(" AND ").join(clauses);
             sql.append(whereClause);
             LOGGER.info("Complete WHERE clause: {}", whereClause);
-        } else {
+        }
+        else {
             LOGGER.info("No WHERE clauses generated");
         }
 
@@ -217,8 +230,6 @@ public abstract class JdbcSplitQueryBuilder
         for (int i = 0; i < accumulator.size(); i++) {
             TypeAndValue typeAndValue = accumulator.get(i);
             LOGGER.info("Parameter {}: type={}, value={}", i + 1, typeAndValue.getType(), typeAndValue.getValue());
-        for (int i = 0; i < accumulator.size(); i++) {
-            TypeAndValue typeAndValue = accumulator.get(i);
 
             Types.MinorType minorTypeForArrowType = Types.getMinorTypeForArrowType(typeAndValue.getType());
 
@@ -446,7 +457,7 @@ public abstract class JdbcSplitQueryBuilder
             LOGGER.info("Target table: {}.{}.{}", catalog, schema, table);
             LOGGER.info("Table schema: {} fields", tableSchema.getFields().size());
 
-            SqlNode sqlNode = SubstraitSqlUtils.deserializeSubstraitPlan(base64EncodedPlan, sqlDialect);
+            SqlNode sqlNode = SubstraitSqlUtils.deserializeSubstraitPlan(base64EncodedPlan, sqlDialect, schema, table, tableSchema);
             LOGGER.info("Deserialized SQL node type: {}", sqlNode.getClass().getSimpleName());
             
             List<SubstraitTypeAndValue> accumulator = new ArrayList<>();
