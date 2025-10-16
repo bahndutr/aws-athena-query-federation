@@ -82,6 +82,35 @@ public class OracleQueryStringBuilder
     }
 
     @Override
+    protected String appendLimitOffset(Split split)
+    {
+        if (split == null) {
+            return "";
+        }
+        String primaryKey = "";
+        String xLimit = "";
+        String xOffset = "";
+        String partitionVal = split.getProperty(split.getProperties().keySet().iterator().next());
+        if (!partitionVal.contains("-")) {
+            return "";
+        }
+        else {
+            String[] arr = partitionVal.split("-");
+            if (arr.length >= 7) {
+                primaryKey = arr[2];
+                xLimit = arr[4];
+                xOffset = arr[6];
+            }
+        }
+
+        // if no primary key, single split only
+        if (primaryKey.equals("")) {
+            return "";
+        }
+        return "ORDER BY " + primaryKey + " " + appendLimitOffsetWithValue(xLimit, xOffset);
+    }
+
+    @Override
     protected SqlDialect getSqlDialect()
     {
         return OracleSqlDialect.DEFAULT;

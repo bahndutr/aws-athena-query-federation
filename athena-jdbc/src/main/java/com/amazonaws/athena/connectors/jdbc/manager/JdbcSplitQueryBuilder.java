@@ -457,7 +457,7 @@ public abstract class JdbcSplitQueryBuilder
             LOGGER.info("Target table: {}.{}.{}", catalog, schema, table);
             LOGGER.info("Table schema: {} fields", tableSchema.getFields().size());
 
-            SqlNode sqlNode = SubstraitSqlUtils.deserializeSubstraitPlan(base64EncodedPlan, sqlDialect, schema, table, tableSchema);
+            SqlNode sqlNode = SubstraitSqlUtils.deserializeSubstraitPlan(base64EncodedPlan, sqlDialect);
             LOGGER.info("Deserialized SQL node type: {}", sqlNode.getClass().getSimpleName());
             
             List<SubstraitTypeAndValue> accumulator = new ArrayList<>();
