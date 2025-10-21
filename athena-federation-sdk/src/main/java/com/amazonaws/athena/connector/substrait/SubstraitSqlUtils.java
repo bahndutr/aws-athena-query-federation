@@ -51,7 +51,7 @@ public final class SubstraitSqlUtils
         try {
             // Create schema-aware converter for table/column resolution
             CustomSubstraitToCalcite substraitToCalcite = new CustomSubstraitToCalcite(
-                    SimpleExtension.loadDefaults(),
+                    SimpleExtension.load(java.util.Collections.emptyList()),
                     new SqlTypeFactoryImpl(sqlDialect.getTypeSystem()),
                     TypeConverter.DEFAULT,
                     tableName,
@@ -74,7 +74,7 @@ public final class SubstraitSqlUtils
         try {
             // Create standard converter
             SubstraitToCalcite substraitToCalcite = new SubstraitToCalcite(
-                    SimpleExtension.loadDefaults(),
+                    SimpleExtension.load(java.util.Collections.emptyList()),
                     new SqlTypeFactoryImpl(sqlDialect.getTypeSystem())
             );
             

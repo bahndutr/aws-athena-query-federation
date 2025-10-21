@@ -203,13 +203,6 @@ public final class SubstraitFunctionParser
     }
 
     /**
-     * Helper class to hold scalar function information.
-     */
-    private record ScalarFunctionInfo(String functionName, List<FunctionArgument> arguments)
-    {
-    }
-
-    /**
      * Maps Substrait function names to corresponding Operator enum values.
      * This method is mapping only small set of operators, and we will extend this as we need.
      * 
