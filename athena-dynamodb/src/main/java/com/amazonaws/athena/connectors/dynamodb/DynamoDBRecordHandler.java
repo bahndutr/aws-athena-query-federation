@@ -220,6 +220,7 @@ public class DynamoDBRecordHandler
         Iterator<Map<String, AttributeValue>> itemIterator =
                 getIterator(split, tableName, recordsRequest.getSchema(), recordsRequest.getConstraints(),
                         disableProjectionAndCasing, plan, overrideConfig);
+        // Variable to determine limit can be applied or not, If applicable what is the limit value.
         Pair<Boolean, Integer> limitPair = getLimit(plan, recordsRequest.getConstraints());
         writeItemsToBlock(spiller, recordsRequest, queryStatusChecker, recordMetadata, itemIterator, disableProjectionAndCasing, limitPair);
     }
@@ -290,6 +291,7 @@ public class DynamoDBRecordHandler
             }
             spiller.writeRows((Block block, int rowNum) -> rowWriter.writeRow(block, rowNum, item) ? 1 : 0);
             numRows++;
+            // If limit is enabled and records fetched is greater than limit, We can stop execution.
             if (limitPair.getLeft() && numRows >= limitPair.getRight()) {
                 return;
             }
@@ -297,24 +299,22 @@ public class DynamoDBRecordHandler
         logger.info("readWithConstraint: numRows[{}]", numRows);
     }
 
-    private boolean canApplyLimit(Constraints constraints,
+    private Optional<Integer> canApplyLimit(Constraints constraints,
                                   SubstraitRelModel substraitRelModel,
                                   boolean useQueryPlan)
     {
         if (useQueryPlan) {
             if (substraitRelModel.getSortRel() == null && substraitRelModel.getFetchRel() != null) {
-                int limit = getLimit(substraitRelModel);
-                return limit > 0;
+                FetchRel fetchRel = substraitRelModel.getFetchRel();
+                int limit = (int) fetchRel.getCount();
+                return Optional.of(limit);
             }
-            return false;
+            return Optional.empty();
         }
-        return constraints.hasLimit() && !constraints.hasNonEmptyOrderByClause();
-    }
-
-    private int getLimit(SubstraitRelModel substraitRelModel)
-    {
-        FetchRel fetchRel = substraitRelModel.getFetchRel();
-        return (int) fetchRel.getCount();
+        if (constraints.hasLimit() && !constraints.hasNonEmptyOrderByClause()) {
+            return Optional.of((int) constraints.getLimit());
+        }
+        return Optional.empty();
     }
 
     private boolean rangeFilterHasIn(String rangeKeyFilter) 
@@ -501,6 +501,7 @@ public class DynamoDBRecordHandler
                 if (currentPageIterator.get() != null && currentPageIterator.get().hasNext()) {
                     return currentPageIterator.get().next();
                 }
+                // Variable to determine limit can be applied or not, If applicable what is the limit value.
                 Pair<Boolean, Integer> limitPair = getLimit(plan, constraints);
                 Iterator<Map<String, AttributeValue>> iterator;
                 try {
@@ -561,14 +562,9 @@ public class DynamoDBRecordHandler
             substraitRelModel = SubstraitRelModel.buildSubstraitRelModel(plan.getRelations(0).getRoot().getInput());
             useQueryPlan = true;
         }
-        if (canApplyLimit(constraints, substraitRelModel, useQueryPlan)) {
-            if (useQueryPlan) {
-                int limit = getLimit(substraitRelModel);
-                return Pair.of(true, limit);
-            }
-            else {
-                return Pair.of(true, (int) constraints.getLimit());
-            }
+        Optional<Integer> optionalLimit = canApplyLimit(constraints, substraitRelModel, useQueryPlan);
+        if (optionalLimit.isPresent()) {
+            return Pair.of(true, optionalLimit.get());
         }
         return Pair.of(false, -1);
     }

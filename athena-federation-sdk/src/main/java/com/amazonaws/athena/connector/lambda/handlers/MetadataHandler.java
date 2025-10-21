@@ -125,6 +125,7 @@ public abstract class MetadataHandler
     protected static final String SPILL_PREFIX_ENV = "spill_prefix";
     protected static final String KMS_KEY_ID_ENV = "kms_key_id";
     protected static final String DISABLE_SPILL_ENCRYPTION = "disable_spill_encryption";
+    private final CachableSecretsManager secretsManager;
     private final AthenaClient athena;
     private final S3Client s3Client;
     private final ThrottlingInvoker athenaInvoker;
@@ -132,7 +133,6 @@ public abstract class MetadataHandler
     private final String spillBucket;
     private final String spillPrefix;
     private final String sourceType;
-    private CachableSecretsManager secretsManager;
     private SpillLocationVerifier verifier;
     private final KmsEncryptionProvider kmsEncryptionProvider;
 
@@ -218,7 +218,12 @@ public abstract class MetadataHandler
         return secretsManager.getSecret(secretName);
     }
 
-    protected CachableSecretsManager getSecretsManager()
+    /**
+     * Gets the CachableSecretsManager instance used by this handler.
+     * This is used by credential providers to reuse the same secrets manager instance.
+     * @return The CachableSecretsManager instance
+     */
+    protected CachableSecretsManager getCachableSecretsManager()
     {
         return secretsManager;
     }
@@ -289,13 +294,6 @@ public abstract class MetadataHandler
     {
         logger.info("doHandleRequest: request[{}]", req);
         MetadataRequestType type = req.getRequestType();
-        FederatedIdentity federatedIdentity = req.getIdentity();
-        Map<String, String> connectorRequestOptions = federatedIdentity != null ? federatedIdentity.getConfigOptions() : null;
-
-        if (connectorRequestOptions != null && connectorRequestOptions.get(FAS_TOKEN) != null) {
-            AwsRequestOverrideConfiguration awsRequestOverrideConfiguration = getRequestOverrideConfig(connectorRequestOptions);
-            secretsManager = new CachableSecretsManager(getSecretsManagerClient(awsRequestOverrideConfiguration, SecretsManagerClient.create()));
-        }
         switch (type) {
             case LIST_SCHEMAS:
                 try (ListSchemasResponse response = doListSchemaNames(allocator, (ListSchemasRequest) req)) {
@@ -327,6 +325,8 @@ public abstract class MetadataHandler
                 }
                 return;
             case GET_SPLITS:
+                FederatedIdentity federatedIdentity = req.getIdentity();
+                Map<String, String> connectorRequestOptions = federatedIdentity.getConfigOptions();
                 if (connectorRequestOptions != null && connectorRequestOptions.get(FAS_TOKEN) != null) {
                     AwsRequestOverrideConfiguration awsRequestOverrideConfiguration = getRequestOverrideConfig(connectorRequestOptions);
                     verifier = new SpillLocationVerifier(getS3Client(awsRequestOverrideConfiguration, s3Client));
