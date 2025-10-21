@@ -48,8 +48,15 @@ import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
-import io.substrait.plan.Plan.Root;
-import io.substrait.proto.*;
+import io.substrait.proto.Expression;
+import io.substrait.proto.FetchRel;
+import io.substrait.proto.Plan;
+import io.substrait.proto.PlanRel;
+import io.substrait.proto.ReadRel;
+import io.substrait.proto.Rel;
+import io.substrait.proto.RelRoot;
+import io.substrait.proto.SortField;
+import io.substrait.proto.SortRel;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.ArrowType;
@@ -159,6 +166,9 @@ public class DocDBRecordHandlerTest
     {
         logger.info("{}: enter", testName.getMethodName());
 
+        // Set AWS region for tests to avoid SdkClientException
+        System.setProperty("aws.region", "us-east-1");
+
         schemaForRead = SchemaBuilder.newBuilder()
                 .addField("col1", new ArrowType.Int(32, true))
                 .addField("col2", new ArrowType.Utf8())
@@ -219,6 +229,8 @@ public class DocDBRecordHandlerTest
                     }
                     return new ResponseInputStream<>(GetObjectResponse.builder().build(), new ByteArrayInputStream(byteHolder.getBytes()));
                 });
+
+
 
         handler = new DocDBRecordHandler(amazonS3, mockSecretsManager, mockAthena, connectionFactory, com.google.common.collect.ImmutableMap.of());
         spillReader = new S3BlockSpillReader(amazonS3, allocator);
@@ -524,8 +536,8 @@ public class DocDBRecordHandlerTest
     @Test
     public void testReadWithLimitFromQueryPlan() throws Exception
     {
-        // SELECT * FROM test_table LIMIT 5
-        QueryPlan queryPlan = getQueryPlan(buildBase64SubstraitPlan(5, false));
+        // SELECT col1, col2, col3 FROM test_table WHERE col1 IN (123, 456, 789) limit 5
+        QueryPlan queryPlan = getQueryPlan("ChsIARIXL2Z1bmN0aW9uc19ib29sZWFuLnlhbWwKHggCEhovZnVuY3Rpb25zX2NvbXBhcmlzb24ueWFtbBINGgsIARoHb3I6Ym9vbBIVGhMIAhABGg1lcXVhbDphbnlfYW55Go4CEosCCvYBGvMBCgIKABLqATrnAQoHEgUKAwMEBRK5ARK2AQoCCgASPgo8CgIKABIoCgRDT0wxCgRDT0wyCgRDT0wzEhQKBCoCEAEKBGICEAEKBFoCEAEYAjoMCgpURVNUX1RBQkxFGnAabhoECgIQASIgGh4aHAgBGgQKAhABIgoaCBIGCgISACIAIgYaBAoCKHsiIRofGh0IARoECgIQASIKGggSBgoCEgAiACIHGgUKAyjIAyIhGh8aHQgBGgQKAhABIgoaCBIGCgISACIAIgcaBQoDKJUGGggSBgoCEgAiABoKEggKBBICCAEiABoKEggKBBICCAIiACAFEgRDT0wxEgRDT0wyEgRDT0wz");
 
         // Prepare docs > limit
         List<Document> documents = new ArrayList<>();
@@ -534,8 +546,9 @@ public class DocDBRecordHandlerTest
         }
 
         // Mock Mongo iterable
-        when(mockCollection.find(nullable(Document.class))).thenReturn(mockIterable);
-        when(mockIterable.projection(nullable(Document.class))).thenReturn(mockIterable);
+        when(mockCollection.find(any(Document.class))).thenReturn(mockIterable);
+        when(mockIterable.projection(any(Document.class))).thenReturn(mockIterable);
+        when(mockIterable.limit(anyInt())).thenReturn(mockIterable);
         when(mockIterable.batchSize(anyInt())).thenReturn(mockIterable);
         when(mockIterable.iterator()).thenReturn(new StubbingCursor(documents.iterator()));
 
@@ -574,9 +587,8 @@ public class DocDBRecordHandlerTest
     @Test
     public void testReadWithLimitAndOrderByFromQueryPlan() throws Exception
     {
-        // SELECT * FROM test_table ORDER BY col0 LIMIT 3
-        QueryPlan queryPlan = getQueryPlan(
-                buildBase64SubstraitPlan(3, true, 0));
+        // SELECT * FROM test_table ORDER BY col1 DESC LIMIT 5
+        QueryPlan queryPlan = getQueryPlan("GqgBEqUBCpABGo0BCgIKABKEASqBAQoCCgASbTprCgcSBQoDAwQFEj4KPAoCCgASKAoEQ09MMQoEQ09MMgoEQ09MMxIUCgQqAhABCgRiAhABCgRaAhABGAI6DAoKVEVTVF9UQUJMRRoIEgYKAhIAIgAaChIICgQSAggBIgAaChIICgQSAggCIgAaDAoIEgYKAhIAIgAQAyAFEgRDT0wxEgRDT0wyEgRDT0wz");
 
         List<Document> documents = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
@@ -585,6 +597,8 @@ public class DocDBRecordHandlerTest
 
         when(mockCollection.find(nullable(Document.class))).thenReturn(mockIterable);
         when(mockIterable.projection(nullable(Document.class))).thenReturn(mockIterable);
+        when(mockIterable.sort(any(Document.class))).thenReturn(mockIterable);
+        when(mockIterable.limit(anyInt())).thenReturn(mockIterable);
         when(mockIterable.batchSize(anyInt())).thenReturn(mockIterable);
         when(mockIterable.iterator()).thenReturn(new StubbingCursor(documents.iterator()));
 
@@ -617,8 +631,7 @@ public class DocDBRecordHandlerTest
         assertTrue(rawResponse instanceof ReadRecordsResponse);
         ReadRecordsResponse response = (ReadRecordsResponse) rawResponse;
 
-        // Limit not applicable if order by present
-        assertEquals(10, response.getRecords().getRowCount());
+        assertEquals(5, response.getRecords().getRowCount());
     }
 
     @Test
@@ -633,6 +646,7 @@ public class DocDBRecordHandlerTest
 
         when(mockCollection.find(nullable(Document.class))).thenReturn(mockIterable);
         when(mockIterable.projection(nullable(Document.class))).thenReturn(mockIterable);
+        when(mockIterable.limit(anyInt())).thenReturn(mockIterable);
         when(mockIterable.batchSize(anyInt())).thenReturn(mockIterable);
         when(mockIterable.iterator()).thenReturn(new StubbingCursor(documents.iterator()));
 
@@ -739,7 +753,6 @@ public class DocDBRecordHandlerTest
 
     private QueryPlan getQueryPlan(String base64Plan)
     {
-        return new QueryPlan("", base64Plan);
+        return new QueryPlan("1.0", base64Plan);
     }
-
 }
