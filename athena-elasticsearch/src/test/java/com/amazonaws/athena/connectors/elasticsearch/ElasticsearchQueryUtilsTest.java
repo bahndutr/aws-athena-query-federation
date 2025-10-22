@@ -28,7 +28,7 @@ import com.amazonaws.athena.connector.lambda.domain.predicate.Range;
 import com.amazonaws.athena.connector.lambda.domain.predicate.SortedRangeSet;
 import com.amazonaws.athena.connector.lambda.domain.predicate.ValueSet;
 import com.amazonaws.athena.connector.substrait.model.ColumnPredicate;
-import com.amazonaws.athena.connector.substrait.model.Operator;
+import com.amazonaws.athena.connector.substrait.model.SubstraitOperator;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.substrait.proto.Plan;
@@ -47,6 +47,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.junit.MockitoJUnitRunner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.Arrays;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -252,11 +254,11 @@ public class ElasticsearchQueryUtilsTest
 
     @ParameterizedTest()
     @MethodSource("getInputTestMakeQueryFromPlanForDifferentOperator")
-    public void testMakeQueryFromPlanForDifferentOperator(Operator op, Object value, String expected)
+    public void testMakeQueryFromPlanForDifferentOperator(SubstraitOperator op, Object value, String expected)
     {
         Map<String, List<ColumnPredicate>> preds =
                 oneColumn("col", mockPredicates(op, value));
-        QueryBuilder queryBuilder = ElasticsearchQueryUtils.makeQueryFromPlan(preds);
+        QueryBuilder queryBuilder = ElasticsearchQueryUtils.makeQueryFromPlan(preds, Arrays.asList("col"));
         assertEquals(expected, queryBuilder.queryName());
     }
 
@@ -266,7 +268,7 @@ public class ElasticsearchQueryUtilsTest
                                                       Map<String, List<ColumnPredicate>> preds,
                                                       String expectedQuery)
     {
-        QueryBuilder qb = ElasticsearchQueryUtils.makeQueryFromPlan(preds);
+        QueryBuilder qb = ElasticsearchQueryUtils.makeQueryFromPlan(preds, Arrays.asList("active", "email"));
         assertEquals(expectedQuery, qb.queryName());
     }
 
@@ -278,8 +280,8 @@ public class ElasticsearchQueryUtilsTest
                         "same column ANDed in order",
                         new LinkedHashMap<String, List<ColumnPredicate>>() {{
                             put("age", Arrays.asList(
-                                    mockPredicates(Operator.GREATER_THAN_OR_EQUAL_TO, 18),
-                                    mockPredicates(Operator.LESS_THAN, 65)
+                                    mockPredicates(SubstraitOperator.GREATER_THAN_OR_EQUAL_TO, 18),
+                                    mockPredicates(SubstraitOperator.LESS_THAN, 65)
                             ));
                         }},
                         "age:[18 TO *] AND age:{* TO 65}"
@@ -288,10 +290,10 @@ public class ElasticsearchQueryUtilsTest
                 Arguments.of(
                         "multiple columns ANDed in insertion order",
                         new LinkedHashMap<String, List<ColumnPredicate>>() {{
-                            put("active", Collections.singletonList(mockPredicates(Operator.EQUAL, true)));
-                            put("email", Collections.singletonList(mockPredicates(Operator.IS_NOT_NULL, null)));
+                            put("active", Collections.singletonList(mockPredicates(SubstraitOperator.EQUAL, true)));
+                            put("email", Collections.singletonList(mockPredicates(SubstraitOperator.IS_NOT_NULL, null)));
                         }},
-                        "active:true AND (_exists_:email)"
+                        "active:(true) AND (_exists_:email)"
                 )
         );
     }
@@ -299,15 +301,15 @@ public class ElasticsearchQueryUtilsTest
     private static Stream<Arguments> getInputTestMakeQueryFromPlanForDifferentOperator()
     {
         return Stream.of(
-                Arguments.of(Operator.EQUAL, 42, "col:42"),
-                Arguments.of(Operator.NOT_EQUAL, 100, "NOT col:100"),
-                Arguments.of(Operator.GREATER_THAN, 50, "col:{50 TO *}"),
-                Arguments.of(Operator.GREATER_THAN_OR_EQUAL_TO, 1970, "col:[1970 TO *]"),
-                Arguments.of(Operator.LESS_THAN, 25, "col:{* TO 25}"),
-                Arguments.of(Operator.LESS_THAN_OR_EQUAL_TO, 30, "col:[* TO 30]"),
-                Arguments.of(Operator.EQUAL, "open", "col:open"),
-                Arguments.of(Operator.IS_NULL, null, "(NOT _exists_:col)"),
-                Arguments.of(Operator.IS_NOT_NULL, null, "(_exists_:col)")
+                Arguments.of(SubstraitOperator.EQUAL, 42, "col:(42)"),
+                Arguments.of(SubstraitOperator.NOT_EQUAL, 100, "NOT col:\"100\""),
+                Arguments.of(SubstraitOperator.GREATER_THAN, 50, "col:{50 TO *}"),
+                Arguments.of(SubstraitOperator.GREATER_THAN_OR_EQUAL_TO, 1970, "col:[1970 TO *]"),
+                Arguments.of(SubstraitOperator.LESS_THAN, 25, "col:{* TO 25}"),
+                Arguments.of(SubstraitOperator.LESS_THAN_OR_EQUAL_TO, 30, "col:[* TO 30]"),
+                Arguments.of(SubstraitOperator.EQUAL, "open", "col:(open)"),
+                Arguments.of(SubstraitOperator.IS_NULL, null, "(NOT _exists_:col)"),
+                Arguments.of(SubstraitOperator.IS_NOT_NULL, null, "(_exists_:col)")
         );
     }
 
@@ -318,7 +320,7 @@ public class ElasticsearchQueryUtilsTest
         return m;
     }
 
-    private static ColumnPredicate mockPredicates(Operator op, Object value)
+    private static ColumnPredicate mockPredicates(SubstraitOperator op, Object value)
     {
         ColumnPredicate p = mock(ColumnPredicate.class);
         when(p.getOperator()).thenReturn(op);

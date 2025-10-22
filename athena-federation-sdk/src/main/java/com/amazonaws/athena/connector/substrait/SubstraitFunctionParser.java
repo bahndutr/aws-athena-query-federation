@@ -27,6 +27,8 @@ import io.substrait.proto.FunctionArgument;
 import io.substrait.proto.SimpleExtensionDeclaration;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.commons.lang3.tuple.Pair;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -40,6 +42,8 @@ import java.util.Map;
  */
 public final class SubstraitFunctionParser
 {
+    private static final Logger logger = LoggerFactory.getLogger(SubstraitFunctionParser.class);
+    
     private SubstraitFunctionParser()
     {
         // Utility class - prevent instantiation
@@ -58,11 +62,22 @@ public final class SubstraitFunctionParser
                                                                             Expression expression,
                                                                             List<String> columnNames)
     {
+        logger.debug("getColumnPredicatesMap: parsing expression with {} extension declarations and {} columns", 
+                extensionDeclarationList.size(), columnNames.size());
+        logger.debug("getColumnPredicatesMap: column names: {}", columnNames);
+        
         List<ColumnPredicate> columnPredicates = parseColumnPredicates(extensionDeclarationList, expression, columnNames);
+        logger.debug("getColumnPredicatesMap: parsed {} column predicates", columnPredicates.size());
+        
         Map<String, List<ColumnPredicate>> columnPredicatesMap = new HashMap<>();
         for (ColumnPredicate columnPredicate : columnPredicates) {
             columnPredicatesMap.computeIfAbsent(columnPredicate.getColumn(), k -> new ArrayList<>()).add(columnPredicate);
         }
+        
+        logger.info("getColumnPredicatesMap: grouped predicates by column: {} columns with predicates", 
+                columnPredicatesMap.size());
+        logger.debug("getColumnPredicatesMap: predicate columns: {}", columnPredicatesMap.keySet());
+        
         return columnPredicatesMap;
     }
 
@@ -79,12 +94,17 @@ public final class SubstraitFunctionParser
                                                               Expression expression,
                                                               List<String> columnNames)
     {
+        logger.debug("parseColumnPredicates: parsing expression type: {}", expression.getRexTypeCase());
+        
         List<ColumnPredicate> columnPredicates = new ArrayList<>();
         ScalarFunctionInfo functionInfo = extractScalarFunctionInfo(expression, extensionDeclarationList);
         
         if (functionInfo == null) {
+            logger.debug("parseColumnPredicates: no scalar function info found, returning empty list");
             return columnPredicates;
         }
+
+        logger.debug("parseColumnPredicates: processing function: {}", functionInfo.getFunctionName());
 
         // Handle NOT unary operator
         if ("not:bool".equals(functionInfo.getFunctionName())) {

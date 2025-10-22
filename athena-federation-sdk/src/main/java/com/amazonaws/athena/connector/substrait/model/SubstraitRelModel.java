@@ -25,6 +25,8 @@ import io.substrait.proto.FilterRel;
 import io.substrait.proto.ProjectRel;
 import io.substrait.proto.ReadRel;
 import io.substrait.proto.SortRel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Model class that encapsulates the different types of Substrait relations extracted from a query plan.
@@ -42,6 +44,8 @@ import io.substrait.proto.SortRel;
  */
 public final class SubstraitRelModel
 {
+    private static final Logger logger = LoggerFactory.getLogger(SubstraitRelModel.class);
+    
     private final ReadRel readRel;
     private final FilterRel filterRel;
     private final ProjectRel projectRel;
@@ -96,15 +100,22 @@ public final class SubstraitRelModel
      */
     public static SubstraitRelModel buildSubstraitRelModel(io.substrait.proto.Rel rel)
     {
+        logger.debug("buildSubstraitRelModel: building relation model from Substrait Rel");
+        
         if (rel == null) {
+            logger.error("buildSubstraitRelModel: Substrait relation is null");
             throw new IllegalArgumentException("Substrait relation cannot be null");
         }
         
+        logger.debug("buildSubstraitRelModel: extracting relation components");
         ReadRel readRel = SubstraitRelUtils.getReadRel(rel);
         FilterRel filterRel = SubstraitRelUtils.getFilterRel(rel);
         ProjectRel projectRel = SubstraitRelUtils.getProjectRel(rel);
         SortRel sortRel = SubstraitRelUtils.getSortRel(rel);
         FetchRel fetchRel = SubstraitRelUtils.getFetchRel(rel);
+        
+        logger.info("buildSubstraitRelModel: extracted relations - ReadRel={}, FilterRel={}, ProjectRel={}, SortRel={}, FetchRel={}", 
+                readRel != null, filterRel != null, projectRel != null, sortRel != null, fetchRel != null);
         
         return new SubstraitRelModel(readRel, filterRel, projectRel, sortRel, fetchRel);
     }

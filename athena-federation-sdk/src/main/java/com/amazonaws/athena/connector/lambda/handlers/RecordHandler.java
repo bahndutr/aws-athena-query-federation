@@ -185,12 +185,20 @@ public abstract class RecordHandler
             throws Exception
     {
         logger.info("doHandleRequest: request[{}]", req);
+        logger.debug("doHandleRequest: requestType={}, catalogName={}", req.getRequestType(), req.getCatalogName());
+        
         RecordRequestType type = req.getRequestType();
         switch (type) {
             case READ_RECORDS:
+                logger.debug("doHandleRequest: processing READ_RECORDS request");
                 FederatedIdentity federatedIdentity = req.getIdentity();
                 Map<String, String> connectorRequestOptions = federatedIdentity != null ? federatedIdentity.getConfigOptions() : null;
+                
+                logger.debug("doHandleRequest: federatedIdentity present={}, configOptions present={}", 
+                        federatedIdentity != null, connectorRequestOptions != null);
+                
                 if (connectorRequestOptions != null && connectorRequestOptions.get(FAS_TOKEN) != null) {
+                    logger.debug("doHandleRequest: FAS token found, setting up secrets manager");
                     AwsRequestOverrideConfiguration awsRequestOverrideConfiguration = getRequestOverrideConfig(connectorRequestOptions);
                     secretsManager = new CachableSecretsManager(getSecretsManagerClient(awsRequestOverrideConfiguration, SecretsManagerClient.create()));
                 }

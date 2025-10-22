@@ -26,6 +26,8 @@ import io.substrait.proto.Plan;
 import io.substrait.proto.ProjectRel;
 import io.substrait.proto.ReadRel;
 import io.substrait.proto.SortRel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Base64;
 
@@ -35,6 +37,8 @@ import java.util.Base64;
  */
 public final class SubstraitRelUtils
 {
+    private static final Logger logger = LoggerFactory.getLogger(SubstraitRelUtils.class);
+    
     private SubstraitRelUtils()
     {
         // Utility class - prevent instantiation
@@ -229,11 +233,22 @@ public final class SubstraitRelUtils
      */
     public static Plan deserializeSubstraitPlan(String planString)
     {
+        logger.debug("deserializeSubstraitPlan: deserializing Substrait plan, length={}", 
+                planString != null ? planString.length() : 0);
+        
         try {
             byte[] planBytes = Base64.getDecoder().decode(planString);
-            return Plan.parseFrom(planBytes);
+            logger.debug("deserializeSubstraitPlan: decoded plan bytes, size={}", planBytes.length);
+            
+            Plan plan = Plan.parseFrom(planBytes);
+            logger.info("deserializeSubstraitPlan: successfully parsed Substrait plan with {} relations", 
+                    plan.getRelationsCount());
+            logger.debug("deserializeSubstraitPlan: plan extensions count={}", plan.getExtensionsCount());
+            
+            return plan;
         }
         catch (InvalidProtocolBufferException e) {
+            logger.error("deserializeSubstraitPlan: failed to parse Substrait plan: {}", e.getMessage());
             throw new RuntimeException("Failed to parse Substrait plan", e);
         }
     }

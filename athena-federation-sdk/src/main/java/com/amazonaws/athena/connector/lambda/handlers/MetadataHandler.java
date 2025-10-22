@@ -125,7 +125,7 @@ public abstract class MetadataHandler
     protected static final String SPILL_PREFIX_ENV = "spill_prefix";
     protected static final String KMS_KEY_ID_ENV = "kms_key_id";
     protected static final String DISABLE_SPILL_ENCRYPTION = "disable_spill_encryption";
-    private final CachableSecretsManager secretsManager;
+    private CachableSecretsManager secretsManager;
     private final AthenaClient athena;
     private final S3Client s3Client;
     private final ThrottlingInvoker athenaInvoker;
@@ -293,9 +293,24 @@ public abstract class MetadataHandler
             throws Exception
     {
         logger.info("doHandleRequest: request[{}]", req);
+        logger.debug("doHandleRequest: requestType={}, catalogName={}", req.getRequestType(), req.getCatalogName());
+        
         MetadataRequestType type = req.getRequestType();
+        FederatedIdentity federatedIdentity = req.getIdentity();
+        Map<String, String> connectorRequestOptions = federatedIdentity != null ? federatedIdentity.getConfigOptions() : null;
+        
+        logger.debug("doHandleRequest: federatedIdentity present={}, configOptions present={}", 
+                federatedIdentity != null, connectorRequestOptions != null);
+
+        if (connectorRequestOptions != null && connectorRequestOptions.get(FAS_TOKEN) != null) {
+            logger.debug("doHandleRequest: FAS token found, setting up secrets manager");
+            AwsRequestOverrideConfiguration awsRequestOverrideConfiguration = getRequestOverrideConfig(connectorRequestOptions);
+            secretsManager = new CachableSecretsManager(getSecretsManagerClient(awsRequestOverrideConfiguration, SecretsManagerClient.create()));
+        }
+        
         switch (type) {
             case LIST_SCHEMAS:
+                logger.debug("doHandleRequest: processing LIST_SCHEMAS request");
                 try (ListSchemasResponse response = doListSchemaNames(allocator, (ListSchemasRequest) req)) {
                     logger.info("doHandleRequest: response[{}]", response);
                     assertNotNull(response);
@@ -303,6 +318,7 @@ public abstract class MetadataHandler
                 }
                 return;
             case LIST_TABLES:
+                logger.debug("doHandleRequest: processing LIST_TABLES request");
                 try (ListTablesResponse response = doListTables(allocator, (ListTablesRequest) req)) {
                     logger.info("doHandleRequest: response[{}]", response);
                     assertNotNull(response);
@@ -310,6 +326,7 @@ public abstract class MetadataHandler
                 }
                 return;
             case GET_TABLE:
+                logger.debug("doHandleRequest: processing GET_TABLE request");
                 try (GetTableResponse response = resolveDoGetTableImplementation(allocator, (GetTableRequest) req)) {
                     logger.info("doHandleRequest: response[{}]", response);
                     assertNotNull(response);
@@ -318,6 +335,7 @@ public abstract class MetadataHandler
                 }
                 return;
             case GET_TABLE_LAYOUT:
+                logger.debug("doHandleRequest: processing GET_TABLE_LAYOUT request");
                 try (GetTableLayoutResponse response = doGetTableLayout(allocator, (GetTableLayoutRequest) req)) {
                     logger.info("doHandleRequest: response[{}]", response);
                     assertNotNull(response);
@@ -325,12 +343,13 @@ public abstract class MetadataHandler
                 }
                 return;
             case GET_SPLITS:
-                FederatedIdentity federatedIdentity = req.getIdentity();
-                Map<String, String> connectorRequestOptions = federatedIdentity.getConfigOptions();
+                logger.debug("doHandleRequest: processing GET_SPLITS request");
                 if (connectorRequestOptions != null && connectorRequestOptions.get(FAS_TOKEN) != null) {
+                    logger.debug("doHandleRequest: FAS token found for GET_SPLITS, setting up S3 client");
                     AwsRequestOverrideConfiguration awsRequestOverrideConfiguration = getRequestOverrideConfig(connectorRequestOptions);
                     verifier = new SpillLocationVerifier(getS3Client(awsRequestOverrideConfiguration, s3Client));
                 }
+                logger.debug("doHandleRequest: checking bucket authorization for spillBucket: {}", spillBucket);
                 verifier.checkBucketAuthZ(spillBucket);
                 try (GetSplitsResponse response = doGetSplits(allocator, (GetSplitsRequest) req)) {
                     logger.info("doHandleRequest: response[{}]", response);
@@ -339,6 +358,7 @@ public abstract class MetadataHandler
                 }
                 return;
             case GET_DATASOURCE_CAPABILITIES:
+                logger.debug("doHandleRequest: processing GET_DATASOURCE_CAPABILITIES request");
                 try (GetDataSourceCapabilitiesResponse response = doGetDataSourceCapabilities(allocator, (GetDataSourceCapabilitiesRequest) req)) {
                     logger.info("doHandleRequest: response[{}]", response);
                     assertNotNull(response);

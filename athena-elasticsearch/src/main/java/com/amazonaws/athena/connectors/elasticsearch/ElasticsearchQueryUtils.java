@@ -26,7 +26,7 @@ import com.amazonaws.athena.connector.lambda.domain.predicate.ValueSet;
 import com.amazonaws.athena.connector.substrait.SubstraitFunctionParser;
 import com.amazonaws.athena.connector.substrait.SubstraitMetadataParser;
 import com.amazonaws.athena.connector.substrait.model.ColumnPredicate;
-import com.amazonaws.athena.connector.substrait.model.Operator;
+import com.amazonaws.athena.connector.substrait.model.SubstraitOperator;
 import com.amazonaws.athena.connector.substrait.model.SubstraitRelModel;
 import io.substrait.proto.Plan;
 import io.substrait.proto.SimpleExtensionDeclaration;
@@ -34,7 +34,6 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.fetch.subphase.FetchSourceContext;
@@ -42,6 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -84,43 +84,70 @@ class ElasticsearchQueryUtils
     /**
      * Parses Substrait plan and extracts filter predicates per column.
      */
-    public static Map<String, List<ColumnPredicate>> buildFilterPredicatesFromPlan(Plan plan) {
+    public static Map<String, List<ColumnPredicate>> buildFilterPredicatesFromPlan(Plan plan)
+    {
+        logger.debug("buildFilterPredicatesFromPlan: processing Substrait plan");
+        
         if (plan == null || plan.getRelationsList().isEmpty()) {
+            logger.debug("buildFilterPredicatesFromPlan: plan is null or empty, returning empty map");
             return new HashMap<>();
         }
+        
+        logger.debug("buildFilterPredicatesFromPlan: building Substrait relation model");
         SubstraitRelModel substraitRelModel = SubstraitRelModel.buildSubstraitRelModel(
                 plan.getRelations(0).getRoot().getInput());
+                
         if (substraitRelModel.getFilterRel() == null) {
+            logger.debug("buildFilterPredicatesFromPlan: no FilterRel found, returning empty map");
             return new HashMap<>();
         }
+        
+        logger.debug("buildFilterPredicatesFromPlan: extracting column predicates from FilterRel");
         List<SimpleExtensionDeclaration> extensionDeclarations = plan.getExtensionsList();
         List<String> tableColumns = SubstraitMetadataParser.getTableColumns(substraitRelModel);
-        return SubstraitFunctionParser.getColumnPredicatesMap(
+        
+        Map<String, List<ColumnPredicate>> predicates = SubstraitFunctionParser.getColumnPredicatesMap(
                 extensionDeclarations,
                 substraitRelModel.getFilterRel().getCondition(),
                 tableColumns);
+                
+        logger.info("buildFilterPredicatesFromPlan: extracted {} column predicates", predicates.size());
+        logger.debug("buildFilterPredicatesFromPlan: predicate columns: {}", predicates.keySet());
+        
+        return predicates;
     }
     /**
      * Converts Substrait column predicates to an Elasticsearch query string query.
      */
-    public static QueryBuilder makeQueryFromPlan(Map<String, List<ColumnPredicate>> predicates) {
+    public static QueryBuilder makeQueryFromPlan(Map<String, List<ColumnPredicate>> predicates, List<String> tableColumns)
+    {
+        logger.debug("makeQueryFromPlan: converting {} column predicates to Elasticsearch query", 
+                predicates != null ? predicates.size() : 0);
+        
         if (predicates == null || predicates.isEmpty()) {
-            logger.info("No predicates formed from Substrait plan.");
+            logger.info("makeQueryFromPlan: no predicates formed from Substrait plan, using match_all query");
             return QueryBuilders.matchAllQuery();
         }
+        
         List<String> predicateStrings = new ArrayList<>();
         for (Map.Entry<String, List<ColumnPredicate>> entry : predicates.entrySet()) {
-            String clause = convertColumnPredicatesToString(entry.getKey(), entry.getValue());
+            logger.debug("makeQueryFromPlan: processing column {} with {} predicates", 
+                    entry.getKey(), entry.getValue().size());
+            String clause = convertColumnPredicatesToString(entry.getKey(), entry.getValue(), tableColumns);
             if (!clause.isEmpty()) {
                 predicateStrings.add(clause);
+                logger.debug("makeQueryFromPlan: added clause for column {}: {}", entry.getKey(), clause);
             }
         }
+        
         if (predicateStrings.isEmpty()) {
+            logger.debug("makeQueryFromPlan: no valid predicates found, using match_all query");
             return QueryBuilders.matchAllQuery();
         }
+        
         // Join predicates with AND
         String combined = Strings.collectionToDelimitedString(predicateStrings, AND_OPER);
-        logger.info("Formed QueryPlan predicates: {}", combined);
+        logger.info("makeQueryFromPlan: formed QueryPlan predicates: {}", combined);
         return QueryBuilders.queryStringQuery(combined).queryName(combined);
     }
 
@@ -134,13 +161,16 @@ class ElasticsearchQueryUtils
      */
     protected static FetchSourceContext getProjection(Schema schema)
     {
+        logger.debug("getProjection: creating projection for schema with {} fields", schema.getFields().size());
+        
         List<String> includedFields = new ArrayList<>();
 
         for (Field field : schema.getFields()) {
             includedFields.add(field.getName());
+            logger.debug("getProjection: added field to projection: {}", field.getName());
         }
 
-        logger.info("Included fields: " + includedFields);
+        logger.info("getProjection: included fields: {}", includedFields);
 
         return new FetchSourceContext(true, Strings.toStringArray(includedFields), Strings.EMPTY_ARRAY);
     }
@@ -152,26 +182,31 @@ class ElasticsearchQueryUtils
      */
     protected static QueryBuilder getQuery(Constraints constraints)
     {
+        logger.debug("getQuery: processing constraints with {} summary entries", constraints.getSummary().size());
+        
         Map<String, ValueSet> constraintSummary = constraints.getSummary();
         List<String> predicates = new ArrayList<>();
 
         constraintSummary.forEach((fieldName, constraint) -> {
+            logger.debug("getQuery: processing constraint for field: {}", fieldName);
             String predicate = getPredicate(fieldName, constraint);
             if (!predicate.isEmpty()) {
                 // predicate1, predicate2, predicate3...
                 predicates.add(predicate);
+                logger.debug("getQuery: added predicate for field {}: {}", fieldName, predicate);
             }
         });
 
         if (predicates.isEmpty()) {
+            logger.debug("getQuery: no predicates formed from constraints, using match_all query");
             // No predicates formed.
-            logger.info("Predicates are NOT formed.");
+            logger.info("getQuery: predicates are NOT formed");
             return QueryBuilders.matchAllQuery();
         }
 
         // predicate1 AND predicate2 AND predicate3...
         String formedPredicates = Strings.collectionToDelimitedString(predicates, AND_OPER);
-        logger.info("Formed Predicates: {}", formedPredicates);
+        logger.info("getQuery: formed predicates: {}", formedPredicates);
 
         return QueryBuilders.queryStringQuery(formedPredicates).queryName(formedPredicates);
     }
@@ -311,40 +346,223 @@ class ElasticsearchQueryUtils
     /**
      * Converts a list of ColumnPredicates into an ES-compatible query string.
      */
-    private static String convertColumnPredicatesToString(String column, List<ColumnPredicate> colPreds) {
-        List<String> parts = new ArrayList<>();
-        for (ColumnPredicate predicate : colPreds) {
+    private static String convertColumnPredicatesToString(String column, List<ColumnPredicate> colPreds, List<String> tableColumns)
+    {
+        logger.info("Converting {} predicates for column '{}'", colPreds.size(), column);
+        
+        // Find the original field name from schema (case-sensitive match)
+        String esFieldName = findOriginalFieldName(column, tableColumns);
+        logger.info("Converted Substrait field name '{}' to ES field name '{}'", column, esFieldName);
+        
+        // Group EQUAL operations for OR logic, others for AND logic
+        List<String> equalValues = new ArrayList<>();
+        List<String> otherParts = new ArrayList<>();
+        
+        for (int i = 0; i < colPreds.size(); i++) {
+            ColumnPredicate predicate = colPreds.get(i);
             Object value = predicate.getValue();
-            Operator op = predicate.getOperator();
+            SubstraitOperator op = predicate.getOperator();
+            
+            logger.info("Predicate #{} for column '{}': operator={}, value={}", i + 1, esFieldName, op, value);
+            
+            // Handle NOR separately due to potential enum compilation issues
+            if ("NOR".equals(op.name())) {
+                // NOR: NOT (A OR B OR C) = NOT A AND NOT B AND NOT C (De Morgan's law)
+                if (value instanceof List) {
+                    List<String> norParts = new ArrayList<>();
+                    for (Object childObj : (List<?>) value) {
+                        if (childObj instanceof ColumnPredicate) {
+                            ColumnPredicate child = (ColumnPredicate) childObj;
+                            String childFieldName = findOriginalFieldName(child.getColumn(), tableColumns);
+                            
+                            // Convert each child to its negation
+                            String negatedPredicate = convertToNegation(child, childFieldName);
+                            if (!negatedPredicate.isEmpty()) {
+                                norParts.add(negatedPredicate);
+                            }
+                        }
+                    }
+                    if (!norParts.isEmpty()) {
+                        // Combine negated predicates with AND
+                        String predicatePart = String.join(AND_OPER, norParts);
+                        otherParts.add(predicatePart);
+                    }
+                }
+                continue;
+            }
+            
+            // Handle NAND separately due to potential enum compilation issues
+            if ("NAND".equals(op.name())) {
+                // NAND: NOT (A AND B AND C) = NOT A OR NOT B OR NOT C (De Morgan's law)
+                if (value instanceof List) {
+                    List<String> nandParts = new ArrayList<>();
+                    for (Object childObj : (List<?>) value) {
+                        if (childObj instanceof ColumnPredicate) {
+                            ColumnPredicate child = (ColumnPredicate) childObj;
+                            String childFieldName = findOriginalFieldName(child.getColumn(), tableColumns);
+                            
+                            // Convert each child to its negation
+                            String negatedPredicate = convertToNegation(child, childFieldName);
+                            if (!negatedPredicate.isEmpty()) {
+                                nandParts.add(negatedPredicate);
+                            }
+                        }
+                    }
+                    if (!nandParts.isEmpty()) {
+                        // Combine negated predicates with OR
+                        String predicatePart = String.join(OR_OPER, nandParts);
+                        otherParts.add(predicatePart);
+                    }
+                }
+                continue;
+            }
+            
+            // Handle NOT separately for unary NOT operations
+            if ("NOT".equals(op.name())) {
+                // NOT is a unary operator - negate the field existence or value
+                if (value == null) {
+                    // Simple NOT on field existence
+                    String predicatePart = existsPredicate(false, esFieldName);
+                    otherParts.add(predicatePart);
+                } else {
+                    // NOT with a value - treat as NOT_EQUAL
+                    String predicatePart = existsPredicate(true, esFieldName) + " AND " + esFieldName + ":([* TO " + formatValueForES(value, esFieldName) + "} OR {" + formatValueForES(value, esFieldName) + " TO *])";
+                    otherParts.add(predicatePart);
+                }
+                continue;
+            }
+            
+            String predicatePart;
             switch (op) {
                 case EQUAL:
-                    parts.add(column + ":" + value);
+                    equalValues.add(value.toString());
                     break;
                 case NOT_EQUAL:
-                    parts.add(NOT_OPER + column + ":" + value);
+                    predicatePart = existsPredicate(true, esFieldName) + " AND " + esFieldName + ":([* TO " + formatValueForES(value, esFieldName) + "} OR {" + formatValueForES(value, esFieldName) + " TO *])";
+                    otherParts.add(predicatePart);
                     break;
                 case GREATER_THAN:
-                    parts.add(column + ":{" + value + " TO *}");
+                    predicatePart = esFieldName + ":{" + formatValueForES(value, esFieldName) + " TO *}";
+                    otherParts.add(predicatePart);
                     break;
                 case GREATER_THAN_OR_EQUAL_TO:
-                    parts.add(column + ":[" + value + " TO *]");
+                    predicatePart = esFieldName + ":[" + formatValueForES(value, esFieldName) + " TO *]";
+                    otherParts.add(predicatePart);
                     break;
                 case LESS_THAN:
-                    parts.add(column + ":{* TO " + value + "}");
+                    predicatePart = esFieldName + ":{* TO " + formatValueForES(value, esFieldName) + "}";
+                    otherParts.add(predicatePart);
                     break;
                 case LESS_THAN_OR_EQUAL_TO:
-                    parts.add(column + ":[* TO " + value + "]");
+                    predicatePart = esFieldName + ":[* TO " + formatValueForES(value, esFieldName) + "]";
+                    otherParts.add(predicatePart);
                     break;
                 case IS_NULL:
-                    parts.add(existsPredicate(false, column));
+                    predicatePart = existsPredicate(false, esFieldName);
+                    otherParts.add(predicatePart);
                     break;
                 case IS_NOT_NULL:
-                    parts.add(existsPredicate(true, column));
+                    predicatePart = existsPredicate(true, esFieldName);
+                    otherParts.add(predicatePart);
                     break;
                 default:
                     throw new UnsupportedOperationException("Unsupported operator for ES QueryPlan: " + op);
             }
         }
-        return parts.isEmpty() ? EMPTY_PREDICATE : Strings.collectionToDelimitedString(parts, AND_OPER);
+        
+        // Build the final result
+        List<String> allParts = new ArrayList<>();
+        
+        // Add EQUAL values as OR group with existence check
+        if (!equalValues.isEmpty()) {
+            String valuesString = String.join(OR_OPER, equalValues);
+            String equalsPart = existsPredicate(true, esFieldName) + " AND " + esFieldName + ":(" + valuesString + ")";
+            allParts.add(equalsPart);
+        }
+        
+        // Add other operations
+        allParts.addAll(otherParts);
+        
+        String result = allParts.isEmpty() ? EMPTY_PREDICATE : Strings.collectionToDelimitedString(allParts, AND_OPER);
+        logger.info("Final combined predicate for column '{}': '{}'", esFieldName, result);
+        return result;
+    }
+
+    /**
+     * Finds the original field name from the schema by case-insensitive matching.
+     */
+    private static String findOriginalFieldName(String substraitFieldName, List<String> tableColumns)
+    {
+        // First try exact match
+        if (tableColumns.contains(substraitFieldName)) {
+            return substraitFieldName;
+        }
+        
+        // Then try case-insensitive match
+        for (String originalField : tableColumns) {
+            if (originalField.equalsIgnoreCase(substraitFieldName)) {
+                return originalField;
+            }
+        }
+        
+        // If no match found, return the original (fallback)
+        return substraitFieldName;
+    }
+
+    /**
+     * Converts a ColumnPredicate to its negation for NAND operations.
+     */
+    private static String convertToNegation(ColumnPredicate predicate, String fieldName)
+    {
+        SubstraitOperator op = predicate.getOperator();
+        Object value = predicate.getValue();
+        
+        switch (op) {
+            case EQUAL:
+                // NOT (field = value) becomes field != value
+                return existsPredicate(true, fieldName) + " AND " + fieldName + ":([* TO " + formatValueForES(value, fieldName) + "} OR {" + formatValueForES(value, fieldName) + " TO *])";
+            case NOT_EQUAL:
+                // NOT (field != value) becomes field = value
+                return existsPredicate(true, fieldName) + " AND " + fieldName + ":(" + value + ")";
+            case GREATER_THAN:
+                // NOT (field > value) becomes field <= value
+                return fieldName + ":[* TO " + formatValueForES(value, fieldName) + "]";
+            case GREATER_THAN_OR_EQUAL_TO:
+                // NOT (field >= value) becomes field < value
+                return fieldName + ":{* TO " + formatValueForES(value, fieldName) + "}";
+            case LESS_THAN:
+                // NOT (field < value) becomes field >= value
+                return fieldName + ":[" + formatValueForES(value, fieldName) + " TO *]";
+            case LESS_THAN_OR_EQUAL_TO:
+                // NOT (field <= value) becomes field > value
+                return fieldName + ":({" + formatValueForES(value, fieldName) + " TO *})";
+            case IS_NULL:
+                // NOT (field IS NULL) becomes field IS NOT NULL
+                return existsPredicate(true, fieldName);
+            case IS_NOT_NULL:
+                // NOT (field IS NOT NULL) becomes field IS NULL
+                return existsPredicate(false, fieldName);
+            default:
+                return "";
+        }
+    }
+
+    /**
+     * Formats values for Elasticsearch queries, handling timestamp conversion.
+     */
+    private static String formatValueForES(Object value, String fieldName)
+    {
+        // Handle timestamp fields - convert microseconds to proper format
+        if ("timestamp".equalsIgnoreCase(fieldName) && value instanceof Number) {
+            long microseconds = ((Number) value).longValue();
+            long milliseconds = microseconds / 1000; // Convert to milliseconds
+            String timestamp = java.time.Instant.ofEpochMilli(milliseconds).toString().replace("Z", "");
+            // Remove seconds to match traditional format: 2025-09-30T00:00 instead of 2025-09-30T00:00:00
+            if (timestamp.endsWith(":00")) {
+                timestamp = timestamp.substring(0, timestamp.length() - 3);
+            }
+            return timestamp;
+        }
+        return value.toString();
     }
 }

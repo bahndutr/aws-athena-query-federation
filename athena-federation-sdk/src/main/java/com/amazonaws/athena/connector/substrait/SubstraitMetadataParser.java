@@ -22,6 +22,8 @@ package com.amazonaws.athena.connector.substrait;
 import com.amazonaws.athena.connector.substrait.model.SubstraitField;
 import com.amazonaws.athena.connector.substrait.model.SubstraitRelModel;
 import io.substrait.proto.Type;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,19 +34,29 @@ import java.util.stream.Collectors;
  */
 public class SubstraitMetadataParser
 {
+    private static final Logger logger = LoggerFactory.getLogger(SubstraitMetadataParser.class);
+    
     private SubstraitMetadataParser()
     {
     }
 
     public static List<String> getTableColumns(SubstraitRelModel substraitRelModel)
     {
+        logger.debug("getTableColumns: extracting table columns from Substrait relation model");
+        
         List<String> baseSchema = substraitRelModel.getReadRel().getBaseSchema().getNamesList();
+        logger.debug("getTableColumns: base schema has {} column names", baseSchema.size());
+        
         List<SubstraitField> connectorSchema = new ArrayList<>();
         parseSchemaFields(baseSchema, substraitRelModel.getReadRel().getBaseSchema().getStruct().getTypesList(),
                 connectorSchema, 0);
-        return connectorSchema.stream()
+                
+        List<String> columnNames = connectorSchema.stream()
                 .map(SubstraitField::getName)
                 .collect(Collectors.toList());
+                
+        logger.info("getTableColumns: extracted {} column names: {}", columnNames.size(), columnNames);
+        return columnNames;
     }
 
     private static int parseSchemaFields(List<String> names,

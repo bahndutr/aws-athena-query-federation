@@ -65,7 +65,13 @@ import software.amazon.awssdk.services.glue.model.FederationSourceErrorCode;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -220,12 +226,15 @@ public class ElasticsearchMetadataHandler
     public ListSchemasResponse doListSchemaNames(BlockAllocator allocator, ListSchemasRequest request)
     {
         logger.debug("doListSchemaNames: enter - " + request);
+        logger.info("doListSchemaNames: catalogName={}, autoDiscoverEndpoint={}", request.getCatalogName(), autoDiscoverEndpoint);
 
         if (autoDiscoverEndpoint) {
             // Refresh Domain Map as new domains could have been added (in Amazon ES), and/or old ones removed...
+            logger.debug("doListSchemaNames: refreshing domain map via auto-discovery");
             domainMap = domainMapProvider.getDomainMap(null);
         }
 
+        logger.info("doListSchemaNames: found {} domains: {}", domainMap.size(), domainMap.keySet());
         return new ListSchemasResponse(request.getCatalogName(), domainMap.keySet());
     }
 
@@ -243,17 +252,25 @@ public class ElasticsearchMetadataHandler
             throws IOException
     {
         logger.debug("doListTables: enter - " + request);
+        logger.info("doListTables: catalogName={}, schemaName={}, pageSize={}, nextToken={}", 
+                request.getCatalogName(), request.getSchemaName(), request.getPageSize(), request.getNextToken());
 
         String endpoint = getDomainEndpoint(request.getSchemaName());
         String domain = request.getSchemaName();
         DefaultCredentialsProvider creds = secretMap.get(domain);
         String username = creds != null ? creds.getCredential().getUser() : "";
         String password = creds != null ? creds.getCredential().getPassword() : "";
+        
+        logger.debug("doListTables: endpoint={}, domain={}, hasCredentials={}", endpoint, domain, creds != null);
+        
         AwsRestHighLevelClient client = creds != null ? clientFactory.getOrCreateClient(endpoint, username, password) : clientFactory.getOrCreateClient(endpoint);
+        
         // get regular indices from ES, ignore all system indices starting with period `.` (e.g. .kibana, .tasks, etc...)
         Stream<String> indicesStream = client.getAliases()
                 .stream()
                 .filter(index -> !index.startsWith("."));
+
+        logger.debug("doListTables: retrieved indices from Elasticsearch");
 
         //combine two different data sources and create tables
         Stream<String> tableNamesStream = Stream.concat(indicesStream, getDataStreamNames(client)).sorted();
@@ -263,13 +280,16 @@ public class ElasticsearchMetadataHandler
         String nextToken = null;
 
         if (request.getPageSize() != UNLIMITED_PAGE_SIZE_VALUE) {
-            logger.info("Pagination starting at token {} w/ page size {}", startToken, pageSize);
+            logger.info("doListTables: pagination starting at token {} w/ page size {}", startToken, pageSize);
             tableNamesStream = tableNamesStream.skip(startToken).limit(request.getPageSize());
             nextToken = Integer.toString(startToken + pageSize);
-            logger.info("Next token is {}", nextToken);
+            logger.info("doListTables: next token is {}", nextToken);
         }
 
         List<TableName> tableNames = tableNamesStream.map(tableName -> new TableName(request.getSchemaName(), tableName)).collect(Collectors.toList());
+
+        logger.info("doListTables: returning {} tables", tableNames.size());
+        logger.debug("doListTables: table names: {}", tableNames.stream().map(TableName::getTableName).collect(Collectors.toList()));
 
         return new ListTablesResponse(request.getCatalogName(), tableNames, nextToken);
     }
@@ -290,10 +310,14 @@ public class ElasticsearchMetadataHandler
     public GetTableResponse doGetTable(BlockAllocator allocator, GetTableRequest request)
     {
         logger.debug("doGetTable: enter - " + request);
+        logger.info("doGetTable: catalogName={}, schemaName={}, tableName={}", 
+                request.getCatalogName(), request.getTableName().getSchemaName(), request.getTableName().getTableName());
+        
         Schema schema = null;
         // Look at GLUE catalog first.
         try {
             if (awsGlue != null) {
+                logger.debug("doGetTable: attempting to retrieve schema from AWS Glue");
                 schema = super.doGetTable(allocator, request).getSchema();
                 logger.info("doGetTable: Retrieved schema for table[{}] from AWS Glue.", request.getTableName());
             }
@@ -307,11 +331,16 @@ public class ElasticsearchMetadataHandler
 
         // Supplement GLUE catalog if not present.
         if (schema == null) {
+            logger.debug("doGetTable: schema not found in Glue, retrieving from Elasticsearch");
             String index = request.getTableName().getTableName();
             String domain = request.getTableName().getSchemaName();
             String endpoint = getDomainEndpoint(domain);
+            logger.debug("doGetTable: index={}, domain={}, endpoint={}", index, domain, endpoint);
             schema = getSchema(index, endpoint, domain);
         }
+
+        logger.info("doGetTable: schema retrieved successfully, fieldCount={}", 
+                schema != null ? schema.getFields().size() : 0);
 
         return new GetTableResponse(request.getCatalogName(), request.getTableName(),
                 (schema == null) ? SchemaBuilder.newBuilder().build() : schema, Collections.emptySet());
@@ -346,40 +375,64 @@ public class ElasticsearchMetadataHandler
             throws IOException
     {
         logger.debug("doGetSplits: enter - " + request);
+        logger.info("doGetSplits: catalogName={}, tableName={}, isQueryPassThrough={}", 
+                request.getCatalogName(), request.getTableName(), request.getConstraints().isQueryPassThrough());
+        
         String domain;
         String indx;
         // Get domain
         if (request.getConstraints().isQueryPassThrough()) {
+            logger.debug("doGetSplits: processing query passthrough request");
             domain = request.getConstraints().getQueryPassthroughArguments().get(ElasticsearchQueryPassthrough.SCHEMA);
             indx = request.getConstraints().getQueryPassthroughArguments().get(ElasticsearchQueryPassthrough.INDEX);
+            logger.debug("doGetSplits: passthrough domain={}, index={}", domain, indx);
         }
         else {
             domain = request.getTableName().getSchemaName();
             indx = request.getTableName().getTableName();
+            logger.debug("doGetSplits: regular request domain={}, index={}", domain, indx);
         }
         String endpoint = getDomainEndpoint(domain);
+        logger.debug("doGetSplits: endpoint={}", endpoint);
 
         DefaultCredentialsProvider creds = secretMap.get(domain);
         String username = creds != null ? creds.getCredential().getUser() : "";
         String password = creds != null ? creds.getCredential().getPassword() : "";
+        logger.debug("doGetSplits: hasCredentials={}", creds != null);
+        
         AwsRestHighLevelClient client = creds != null ? clientFactory.getOrCreateClient(endpoint, username, password) : clientFactory.getOrCreateClient(endpoint);
+        
         // We send index request in case the table name is a data stream, a data stream can contains multiple indices which are created by ES
         // For non data stream, index name is same as table name
+        logger.debug("doGetSplits: retrieving index information for {}", indx);
         GetIndexResponse indexResponse = client.indices().get(new GetIndexRequest(indx), RequestOptions.DEFAULT);
+        logger.info("doGetSplits: found {} indices for table {}", indexResponse.getIndices().length, indx);
 
         Set<Split> splits = Arrays.stream(indexResponse.getIndices())
-                .flatMap(index -> getShardsIDsFromES(client, index) // get all shards for an index.
-                        .stream()
-                        .map(shardId -> new Split(makeSpillLocation(request), makeEncryptionKey(), ImmutableMap.of(SECRET_USERNAME, username, SECRET_PASSWORD, password, domain, endpoint, SHARD_KEY, SHARD_VALUE + shardId.toString(), INDEX_KEY, index))) // make split for each (index + shardId) combination
-                )
+                .flatMap(index -> {
+                    logger.debug("doGetSplits: processing index {}", index);
+                    Set<Integer> shardIds = getShardsIDsFromES(client, index);
+                    logger.debug("doGetSplits: found {} shards for index {}: {}", shardIds.size(), index, shardIds);
+                    return shardIds.stream()
+                            .map(shardId -> {
+                                logger.debug("doGetSplits: creating split for index={}, shardId={}", index, shardId);
+                                return new Split(makeSpillLocation(request), makeEncryptionKey(), 
+                                        ImmutableMap.of(SECRET_USERNAME, username, SECRET_PASSWORD, password, 
+                                                domain, endpoint, SHARD_KEY, SHARD_VALUE + shardId.toString(), INDEX_KEY, index));
+                            });
+                })
                 .collect(Collectors.toSet());
 
+        logger.info("doGetSplits: created {} splits total", splits.size());
         return new GetSplitsResponse(request.getCatalogName(), splits);
     }
 
     @Override
     public GetDataSourceCapabilitiesResponse doGetDataSourceCapabilities(BlockAllocator allocator, GetDataSourceCapabilitiesRequest request)
     {
+        logger.debug("doGetDataSourceCapabilities: enter - " + request);
+        logger.info("doGetDataSourceCapabilities: catalogName={}", request.getCatalogName());
+        
         ImmutableMap.Builder<String, List<OptimizationSubType>> capabilities = ImmutableMap.builder();
         queryPassthrough.addQueryPassthroughCapabilityIfEnabled(capabilities, configOptions);
 
@@ -388,11 +441,12 @@ public class ElasticsearchMetadataHandler
                         LimitPushdownSubType.INTEGER_CONSTANT
                 )
         );
+        logger.debug("doGetDataSourceCapabilities: added LIMIT_PUSHDOWN capability");
 
         List<StandardFunctions> supportedFunctions = new ArrayList<>();
         supportedFunctions.add(StandardFunctions.AND_FUNCTION_NAME);
-        supportedFunctions.add(StandardFunctions.NOT_FUNCTION_NAME);
-        supportedFunctions.add(StandardFunctions.OR_FUNCTION_NAME);
+        //supportedFunctions.add(StandardFunctions.NOT_FUNCTION_NAME);
+        //supportedFunctions.add(StandardFunctions.OR_FUNCTION_NAME);
         supportedFunctions.add(StandardFunctions.IS_NULL_FUNCTION_NAME);
         supportedFunctions.add(StandardFunctions.EQUAL_OPERATOR_FUNCTION_NAME);
         supportedFunctions.add(StandardFunctions.GREATER_THAN_OPERATOR_FUNCTION_NAME);
@@ -407,6 +461,11 @@ public class ElasticsearchMetadataHandler
                                 .map(f -> f.getFunctionName().getFunctionName())
                                 .toArray(String[]::new))
         ));
+        
+        logger.info("doGetDataSourceCapabilities: added COMPLEX_EXPRESSION_PUSHDOWN capability with {} supported functions", 
+                supportedFunctions.size());
+        logger.debug("doGetDataSourceCapabilities: supported functions: {}", 
+                supportedFunctions.stream().map(f -> f.getFunctionName().getFunctionName()).collect(Collectors.toList()));
 
         return new GetDataSourceCapabilitiesResponse(request.getCatalogName(), capabilities.build());
     }
@@ -430,16 +489,24 @@ public class ElasticsearchMetadataHandler
 
     private Schema getSchema(String index, String endpoint, String domain)
     {
+        logger.debug("getSchema: index={}, endpoint={}, domain={}", index, endpoint, domain);
+        
         Schema schema;
         DefaultCredentialsProvider creds = secretMap.get(domain);
         String username = creds != null ? creds.getCredential().getUser() : "";
         String password = creds != null ? creds.getCredential().getPassword() : "";
+        logger.debug("getSchema: hasCredentials={}", creds != null);
+        
         AwsRestHighLevelClient client = creds != null ? clientFactory.getOrCreateClient(endpoint, username, password) : clientFactory.getOrCreateClient(endpoint);
         try {
+            logger.debug("getSchema: retrieving mapping for index {}", index);
             Map<String, Object> mappings = client.getMapping(index);
+            logger.debug("getSchema: parsing mapping to schema");
             schema = ElasticsearchSchemaUtils.parseMapping(mappings);
+            logger.info("getSchema: successfully parsed schema with {} fields", schema.getFields().size());
         }
         catch (IOException error) {
+            logger.error("getSchema: error retrieving mapping for index {}: {}", index, error.getMessage());
             throw new AthenaConnectorException("Error retrieving mapping information for index (" +
                     index + ") ", ErrorDetails.builder().errorCode(FederationSourceErrorCode.INTERNAL_SERVICE_EXCEPTION.toString()).build());
         }
@@ -493,18 +560,22 @@ public class ElasticsearchMetadataHandler
     private String getDomainEndpoint(String domain)
             throws RuntimeException
     {
+        logger.debug("getDomainEndpoint: looking up domain={}", domain);
         String endpoint = domainMap.get(domain);
 
         if (endpoint == null && autoDiscoverEndpoint) {
-            logger.warn("Unable to find domain ({}) in map! Attempting to refresh map...", domain);
+            logger.warn("getDomainEndpoint: unable to find domain ({}) in map! Attempting to refresh map...", domain);
             domainMap = domainMapProvider.getDomainMap(null);
             endpoint = domainMap.get(domain);
+            logger.debug("getDomainEndpoint: after refresh, endpoint={}", endpoint);
         }
 
         if (endpoint == null) {
+            logger.error("getDomainEndpoint: unable to find domain: {}", domain);
             throw new AthenaConnectorException("Unable to find domain: " + domain, ErrorDetails.builder().errorCode(FederationSourceErrorCode.ENTITY_NOT_FOUND_EXCEPTION.toString()).build());
         }
 
+        logger.debug("getDomainEndpoint: resolved domain {} to endpoint {}", domain, endpoint);
         return endpoint;
     }
 
