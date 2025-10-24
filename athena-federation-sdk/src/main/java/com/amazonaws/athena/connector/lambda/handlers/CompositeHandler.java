@@ -102,9 +102,6 @@ public class CompositeHandler
             int resolvedSerDeVersion = SerDeVersion.SERDE_VERSION;
             byte[] allInputBytes = com.google.common.io.ByteStreams.toByteArray(inputStream);
 
-            System.out.println("=== LAMBDA REQUEST RECEIVED ===");
-            System.out.println("Raw request: " + new String(allInputBytes, StandardCharsets.UTF_8));
-
             FederationRequest rawReq = null;
             ObjectMapper objectMapper = null;
             while (resolvedSerDeVersion >= 1) {

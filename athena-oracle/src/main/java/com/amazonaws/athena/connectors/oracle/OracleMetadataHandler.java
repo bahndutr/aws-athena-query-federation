@@ -162,9 +162,7 @@ public class OracleMetadataHandler
                 // Return a single partition if no partitions defined
                 if (!resultSet.next()) {
                     blockWriter.writeRows((Block block, int rowNum) -> {
-                        LOGGER.debug("Parameters: " + BLOCK_PARTITION_COLUMN_NAME + " " + rowNum + " " + ALL_PARTITIONS);
                         block.setValue(BLOCK_PARTITION_COLUMN_NAME, rowNum, ALL_PARTITIONS);
-                        LOGGER.info("Adding partition {}", ALL_PARTITIONS);
                         //we wrote 1 row so we return 1
                         return 1;
                     });
@@ -177,7 +175,6 @@ public class OracleMetadataHandler
                         // 2. This API is not paginated, we could use order by and limit clause with offsets here.
                         blockWriter.writeRows((Block block, int rowNum) -> {
                             block.setValue(BLOCK_PARTITION_COLUMN_NAME, rowNum, partitionName);
-                            LOGGER.debug("Adding partition {}", partitionName);
                             //we wrote 1 row so we return 1
                             return 1;
                         });

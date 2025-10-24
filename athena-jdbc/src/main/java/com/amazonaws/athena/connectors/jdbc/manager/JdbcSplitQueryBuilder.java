@@ -143,27 +143,17 @@ public abstract class JdbcSplitQueryBuilder
             final String columnNames)
             throws SQLException
     {
-        LOGGER.info("=== JDBC QUERY BUILDER DETAILS ===");
-        LOGGER.info("Target table: {}.{}.{}", catalog, schema, table);
-        LOGGER.info("Selected columns: {}", columnNames);
-        LOGGER.info("Table schema fields: {}", tableSchema.getFields().size());
-        
         if (constraints.getQueryPlan() != null) {
-            LOGGER.info("=== SUBSTRAIT QUERY PROCESSING ===");
-            LOGGER.info("Query plan size: {} bytes", constraints.getQueryPlan().getSubstraitPlan().length());
             SqlDialect sqlDialect = getSqlDialect();
-            LOGGER.info("SQL dialect: {}", sqlDialect.getClass().getSimpleName());
             return prepareStatementWithSql(jdbcConnection, constraints, sqlDialect, split, catalog, schema, table, columnNames, tableSchema);
         }
 
-        LOGGER.info("=== TRADITIONAL CONSTRAINT PROCESSING ===");
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT ");
         sql.append(columnNames);
 
         if (columnNames.isEmpty()) {
             sql.append("null");
-            LOGGER.info("No columns selected, using null");
         }
         
         String fromClause = getFromClauseWithSplit(catalog, schema, table, split);
@@ -201,19 +191,13 @@ public abstract class JdbcSplitQueryBuilder
         else {
             String limitClause = appendLimitOffset(split);
             sql.append(limitClause);
-            LOGGER.info("Legacy LIMIT clause: {}", limitClause);
         }
-        
-        LOGGER.info("=== FINAL GENERATED SQL ===");
-        LOGGER.info("Final SQL query: {}", sql.toString());
-        LOGGER.info("Parameter count: {}", accumulator.size());
         
         PreparedStatement statement = jdbcConnection.prepareStatement(sql.toString());
         
         // Log parameter binding details
         for (int i = 0; i < accumulator.size(); i++) {
             TypeAndValue typeAndValue = accumulator.get(i);
-            LOGGER.info("Parameter {}: type={}, value={}", i + 1, typeAndValue.getType(), typeAndValue.getValue());
 
             Types.MinorType minorTypeForArrowType = Types.getMinorTypeForArrowType(typeAndValue.getType());
 
@@ -433,15 +417,9 @@ public abstract class JdbcSplitQueryBuilder
                                                         final String table, final String columnNames, final Schema tableSchema)
     {
         try {
-            LOGGER.info("=== SUBSTRAIT QUERY PLAN PROCESSING ===");
             String base64EncodedPlan = constraints.getQueryPlan().getSubstraitPlan();
-            LOGGER.info("Base64 encoded plan length: {} characters", base64EncodedPlan.length());
-            LOGGER.info("SQL dialect: {}", sqlDialect.getClass().getSimpleName());
-            LOGGER.info("Target table: {}.{}.{}", catalog, schema, table);
-            LOGGER.info("Table schema: {} fields", tableSchema.getFields().size());
 
             SqlNode sqlNode = SubstraitSqlUtils.deserializeSubstraitPlan(base64EncodedPlan, sqlDialect, schema, table, tableSchema);
-            LOGGER.info("Deserialized SQL node type: {}", sqlNode.getClass().getSimpleName());
             
             List<SubstraitTypeAndValue> accumulator = new ArrayList<>();
 
@@ -615,21 +593,14 @@ public abstract class JdbcSplitQueryBuilder
             if (limit != null) {
                 String limitOffsetClause = appendLimitOffsetWithValue(limit, offset);
                 sql.append(limitOffsetClause);
-                LOGGER.info("LIMIT/OFFSET clause: {}", limitOffsetClause);
             }
-
-            LOGGER.info("=== FINAL SUBSTRAIT GENERATED SQL ===");
-            LOGGER.info("Final SQL query: {}", sql.toString());
-            LOGGER.info("Substrait parameter count: {}", accumulator.size());
 
             // Check for parameter mismatch - if SQL has no placeholders but accumulator has parameters
             String sqlString = sql.toString();
             int placeholderCount = sqlString.length() - sqlString.replace("?", "").length();
-            LOGGER.info("SUBSTRAIT Parameter mismatch check: SQL has {} placeholders, accumulator has {} parameters", placeholderCount, accumulator.size());
             if (placeholderCount == 0 && accumulator.size() > 0) {
                 LOGGER.warn("SUBSTRAIT Parameter mismatch detected: SQL has {} placeholders but {} parameters collected. Clearing parameters.", placeholderCount, accumulator.size());
                 accumulator.clear();
-                LOGGER.info("SUBSTRAIT Parameters cleared. New accumulator size: {}", accumulator.size());
             }
 
             PreparedStatement statement = jdbcConnection.prepareStatement(sql.toString());
