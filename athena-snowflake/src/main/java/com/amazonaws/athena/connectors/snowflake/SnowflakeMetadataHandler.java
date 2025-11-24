@@ -231,6 +231,9 @@ public class SnowflakeMetadataHandler extends JdbcMetadataHandler
     @Override
     public void enhancePartitionSchema(SchemaBuilder partitionSchemaBuilder, GetTableLayoutRequest request)
     {
+        if (request.getConstraints().isQueryPassThrough()) {
+            return;
+        }
         LOGGER.info("{}: Catalog {}, table {}", request.getQueryId(), request.getTableName().getSchemaName(), request.getTableName());
         // Always ensure the partition column exists in the schema
         if (partitionSchemaBuilder.getField(BLOCK_PARTITION_COLUMN_NAME) == null) {
@@ -259,7 +262,7 @@ public class SnowflakeMetadataHandler extends JdbcMetadataHandler
 
         // Check if S3 export is enabled
         SnowflakeEnvironmentProperties envProperties = new SnowflakeEnvironmentProperties(System.getenv());
-        
+
         if (envProperties.isS3ExportEnabled()) {
             handleS3ExportPartitions(blockWriter, request, schemaName, tableName, constraints, queryID, catalog);
         }
@@ -268,7 +271,7 @@ public class SnowflakeMetadataHandler extends JdbcMetadataHandler
         }
     }
 
-    private void handleDirectQueryPartitions(BlockWriter blockWriter, GetTableLayoutRequest request, 
+    private void handleDirectQueryPartitions(BlockWriter blockWriter, GetTableLayoutRequest request,
             Schema schemaName, TableName tableName, Constraints constraints, String queryID) throws Exception
     {
         LOGGER.debug("getPartitions: {}: Schema {}, table {}", queryID, tableName.getSchemaName(),
@@ -361,7 +364,7 @@ public class SnowflakeMetadataHandler extends JdbcMetadataHandler
             if (roleArn == null || roleArn.trim().isEmpty()) {
                 throw new IllegalArgumentException("Role ARN cannot be null or empty");
             }
-            
+
             String createIntegrationQuery = String.format(
                     "CREATE STORAGE INTEGRATION %s " +
                     "TYPE = EXTERNAL_STAGE " +
@@ -372,7 +375,7 @@ public class SnowflakeMetadataHandler extends JdbcMetadataHandler
                     snowflakeQueryStringBuilder.quote(integrationName),
                     snowflakeQueryStringBuilder.singleQuote(roleArn),
                     snowflakeQueryStringBuilder.singleQuote("s3://" + s3ExportBucket.replace("'", "''") + "/"));
-            
+
             try (Statement stmt = connection.createStatement()) {
                 LOGGER.debug("Create Integration query: {}", createIntegrationQuery);
                 stmt.execute(createIntegrationQuery);
@@ -388,7 +391,7 @@ public class SnowflakeMetadataHandler extends JdbcMetadataHandler
             generatedSql = buildQueryPassthroughSql(constraints);
         }
         else {
-            generatedSql = snowflakeQueryStringBuilder.buildSqlString(connection, catalog, tableName.getSchemaName(), 
+            generatedSql = snowflakeQueryStringBuilder.buildSqlString(connection, catalog, tableName.getSchemaName(),
                     tableName.getTableName(), schemaName, constraints, null);
         }
 
@@ -397,13 +400,13 @@ public class SnowflakeMetadataHandler extends JdbcMetadataHandler
         String escapedQueryID = queryID.replace("'", "''");
         String escapedRandomStr = randomStr.replace("'", "''");
         String escapedIntegration = integrationName.replace("\"", "\"\"");
-        
+
         // Build the COPY INTO query with proper escaping and quoting
         String s3Path = String.format("s3://%s/%s/%s/",
                 escapedBucket.replace("'", "''"),
                 escapedQueryID.replace("'", "''"),
                 escapedRandomStr.replace("'", "''"));
-                
+
         String snowflakeExportQuery = String.format("COPY INTO '%s' FROM (%s) STORAGE_INTEGRATION = %s " +
                 "HEADER = TRUE FILE_FORMAT = (TYPE = 'PARQUET', COMPRESSION = 'SNAPPY') MAX_FILE_SIZE = 16777216",
                 s3Path,
@@ -455,7 +458,7 @@ public class SnowflakeMetadataHandler extends JdbcMetadataHandler
     public GetSplitsResponse doGetSplits(BlockAllocator allocator, GetSplitsRequest request)
     {
         SnowflakeEnvironmentProperties envProperties = new SnowflakeEnvironmentProperties(System.getenv());
-        
+
         if (envProperties.isS3ExportEnabled()) {
             return handleS3ExportSplits(request);
         }
@@ -532,7 +535,7 @@ public class SnowflakeMetadataHandler extends JdbcMetadataHandler
             if (s3ObjectSummaries.isEmpty()) {
                 preparedStatement.execute();
                 s3ObjectSummaries = getlistExportedObjects(exportBucket, prefix);
-                LOGGER.debug("{} s3ObjectSummaries returned after executing on SnowFlake for queryId {}", 
+                LOGGER.debug("{} s3ObjectSummaries returned after executing on SnowFlake for queryId {}",
                         (long) s3ObjectSummaries.size(), queryId);
             }
 
@@ -819,19 +822,8 @@ public class SnowflakeMetadataHandler extends JdbcMetadataHandler
     }
 
     @Override
-    protected CredentialsProvider getCredentialProvider()
+    public CredentialsProvider createCredentialsProvider(String secretName, AwsRequestOverrideConfiguration requestOverrideConfiguration)
     {
-        return getCredentialProvider(null);
-    }
-
-    @Override
-    protected CredentialsProvider getCredentialProvider(AwsRequestOverrideConfiguration requestOverrideConfiguration)
-    {
-        final String secretName = getDatabaseConnectionConfig().getSecret();
-        if (StringUtils.isNotBlank(secretName)) {
-            return new SnowflakeCredentialsProvider(secretName, requestOverrideConfiguration);
-        }
-
-        return null;
+        return new SnowflakeCredentialsProvider(secretName, requestOverrideConfiguration);
     }
 }

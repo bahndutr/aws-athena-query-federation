@@ -442,6 +442,7 @@ public abstract class JdbcSplitQueryBuilder
             String base64EncodedPlan = constraints.getQueryPlan().getSubstraitPlan();
             LOGGER.info("Base64 encoded plan length: {} characters", base64EncodedPlan.length());
             LOGGER.info("SQL dialect: {}", sqlDialect.getClass().getSimpleName());
+            LOGGER.debug("CalciteSql substrait plan: {}", base64EncodedPlan);
 
             SqlNode sqlNode = SubstraitSqlUtils.getSqlNodeFromSubstraitPlan(base64EncodedPlan, sqlDialect);
             LOGGER.info("Deserialized SQL node type: {}", sqlNode.getClass().getSimpleName());
@@ -461,6 +462,7 @@ public abstract class JdbcSplitQueryBuilder
             PreparedStatement statement = jdbcConnection.prepareStatement(root.toSqlString(sqlDialect).getSql());
 
             handleDataTypesForPreparedStatement(statement, accumulator, tableSchema);
+            LOGGER.debug("CalciteSql prepared statement: {}", statement);
 
             return statement;
         }
@@ -530,10 +532,44 @@ public abstract class JdbcSplitQueryBuilder
                         statement.setTimestamp(i + 1,
                                 Timestamp.valueOf(typeAndValue.getValue().toString()));
                     }
+                    else if (typeAndValue.getValue() instanceof Date) {
+                        statement.setDate(i + 1, (Date) typeAndValue.getValue());
+                    }
+                    else if (typeAndValue.getValue() instanceof java.util.Date) {
+                        statement.setDate(i + 1, new Date(((java.util.Date) typeAndValue.getValue()).getTime()));
+                    }
+                    else {
+                        // Try to parse as string as a fallback
+                        try {
+                            String dateStr = typeAndValue.getValue().toString();
+                            statement.setDate(i + 1, Date.valueOf(dateStr));
+                        }
+                        catch (Exception e) {
+                            throw new AthenaConnectorException(
+                                    String.format("Can't handle date format: %s, value type: %s, value: %s",
+                                            typeAndValue.getType(),
+                                            typeAndValue.getValue().getClass().getName(),
+                                            typeAndValue.getValue()),
+                                    ErrorDetails.builder().errorCode(
+                                            FederationSourceErrorCode.OPERATION_NOT_SUPPORTED_EXCEPTION
+                                                    .toString())
+                                            .build());
+                        }
+                    }
+                    break;
+                case TIMESTAMP:
+                    if (typeAndValue.getValue() instanceof TimestampString) {
+                        statement.setTimestamp(i + 1,
+                                Timestamp.valueOf(typeAndValue.getValue().toString()));
+                    }
+                    else if (typeAndValue.getValue() instanceof Number) {
+                        long millis = ((Number) typeAndValue.getValue()).longValue();
+                        statement.setTimestamp(i + 1, new Timestamp(millis));
+                    }
                     else {
                         throw new AthenaConnectorException(
-                                String.format("Can't handle date format: %s",
-                                        typeAndValue.getType()),
+                                String.format("Can't handle timestamp format: %s, value class: %s",
+                                        typeAndValue.getType(), typeAndValue.getValue().getClass().getName()),
                                 ErrorDetails.builder().errorCode(
                                         FederationSourceErrorCode.OPERATION_NOT_SUPPORTED_EXCEPTION
                                                 .toString())
