@@ -104,10 +104,12 @@ public class OracleRecordHandler
         if (constraints.getQueryPlan() != null) {
             LOGGER.info("=== SUBSTRAIT QUERY PLAN DETECTED ===");
             LOGGER.info("Query plan length: {} bytes", constraints.getQueryPlan().getSubstraitPlan().length());
-        } else {
+        }
+        else {
             LOGGER.info("=== TRADITIONAL CONSTRAINTS PROCESSING ===");
-            constraints.getSummary().forEach((column, summary) -> 
-                LOGGER.info("Column '{}' constraints: {}", column, summary));
+            constraints.getSummary().forEach((column, summary) -> {
+                LOGGER.info("Column '{}' constraints: {}", column, summary);
+            });
         }
 
         PreparedStatement preparedStatement;
