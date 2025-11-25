@@ -81,13 +81,11 @@ public class OracleQueryStringBuilder
         return String.format(" FETCH FIRST %d ROWS ONLY ", constraints.getLimit());
     }
 
-    @Override
     protected SqlDialect getSqlDialect()
     {
         return OracleSqlDialect.DEFAULT;
     }
 
-    @Override
     protected String appendLimitOffsetWithValue(String limit, String offset)
     {
         if (offset != null && !offset.equals("0")) {
