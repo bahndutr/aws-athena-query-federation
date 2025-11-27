@@ -141,7 +141,6 @@ public abstract class JdbcSplitQueryBuilder
             throws SQLException
     {
         if (constraints.getQueryPlan() != null) {
-            LOGGER.debug("Processing Substrait query plan ({} bytes)", constraints.getQueryPlan().getSubstraitPlan().length());
             return prepareStatementWithCalciteSql(jdbcConnection, constraints, getSqlDialect(), split);
         }
 
@@ -155,16 +154,13 @@ public abstract class JdbcSplitQueryBuilder
         List<TypeAndValue> accumulator = new ArrayList<>();
 
         List<String> clauses = toConjuncts(tableSchema.getFields(), constraints, accumulator, split.getProperties());
-        LOGGER.info("Generated WHERE clauses from constraints: {}", clauses);
         
         List<String> partitionClauses = getPartitionWhereClauses(split);
         clauses.addAll(partitionClauses);
-        LOGGER.info("Added partition WHERE clauses: {}", partitionClauses);
         
         if (!clauses.isEmpty()) {
             String whereClause = " WHERE " + Joiner.on(" AND ").join(clauses);
             sql.append(whereClause);
-            LOGGER.info("Complete WHERE clause: {}", whereClause);
         }
         else {
             LOGGER.info("No WHERE clauses generated");
@@ -174,23 +170,16 @@ public abstract class JdbcSplitQueryBuilder
 
         if (!Strings.isNullOrEmpty(orderByClause)) {
             sql.append(" ").append(orderByClause);
-            LOGGER.info("ORDER BY clause: {}", orderByClause);
         }
 
         if (constraints.getLimit() > 0) {
             String limitClause = appendLimitOffset(split, constraints);
             sql.append(limitClause);
-            LOGGER.info("LIMIT clause: {}", limitClause);
         }
         else {
             String limitClause = appendLimitOffset(split); // legacy method to preserve functionality of existing connector impls
             sql.append(limitClause);
-            LOGGER.info("Legacy LIMIT clause: {}", limitClause);
         }
-        
-        LOGGER.info("=== FINAL GENERATED SQL ===");
-        LOGGER.info("Final SQL query: {}", sql.toString());
-        LOGGER.info("Parameter count: {}", accumulator.size());
         
         PreparedStatement statement = jdbcConnection.prepareStatement(sql.toString());
         // TODO all types, converts Arrow values to JDBC.
@@ -422,7 +411,6 @@ public abstract class JdbcSplitQueryBuilder
         try {
             List<SubstraitTypeAndValue> accumulator = new ArrayList<>();
             String base64EncodedPlan = constraints.getQueryPlan().getSubstraitPlan();
-            LOGGER.debug("Processing Substrait plan with {} dialect", sqlDialect.getClass().getSimpleName());
 
             SqlNode sqlNode = SubstraitSqlUtils.getSqlNodeFromSubstraitPlan(base64EncodedPlan, sqlDialect);
             
@@ -436,17 +424,11 @@ public abstract class JdbcSplitQueryBuilder
             root.accept(visitor);
 
             String generatedSql = root.toSqlString(sqlDialect).getSql();
-            LOGGER.info("Generated SQL: {}", generatedSql);
             
             long parameterCount = generatedSql.chars().filter(ch -> ch == '?').count();
-            if (parameterCount != accumulator.size()) {
-                LOGGER.warn("Parameter count mismatch: SQL has {} placeholders, accumulator has {} parameters", 
-                    parameterCount, accumulator.size());
-            }
 
             // Check if SQL already contains embedded literals (no parameter placeholders needed)
             if (parameterCount == 0 && accumulator.size() > 0) {
-                LOGGER.info("SQL contains embedded literals, skipping parameter binding. SQL: {}", generatedSql);
                 // Use the SQL as-is without parameter binding
                 PreparedStatement statement = jdbcConnection.prepareStatement(generatedSql);
                 return statement;
@@ -455,7 +437,6 @@ public abstract class JdbcSplitQueryBuilder
             PreparedStatement statement = jdbcConnection.prepareStatement(generatedSql);
 
             handleDataTypesForPreparedStatement(statement, accumulator, tableSchema);
-            LOGGER.info("CalciteSql prepared statement: {}", statement);
 
             return statement;
         }
@@ -468,12 +449,8 @@ public abstract class JdbcSplitQueryBuilder
     private PreparedStatement handleDataTypesForPreparedStatement(PreparedStatement statement,
             List<SubstraitTypeAndValue> accumulator, Schema tableSchema) throws SQLException
     {
-        LOGGER.debug("Setting {} parameters on PreparedStatement", accumulator.size());
-        
         for (int i = 0; i < accumulator.size(); i++) {
             SubstraitTypeAndValue typeAndValue = accumulator.get(i);
-            LOGGER.debug("Parameter {}: {}={}", i + 1, typeAndValue.getColumnName(), typeAndValue.getValue());
-            
             try {
                 switch (typeAndValue.getType()) {
                 case BIGINT:
@@ -585,8 +562,6 @@ public abstract class JdbcSplitQueryBuilder
             }
             }
             catch (SQLException e) {
-                LOGGER.error("Failed to set parameter {} (column: {}, type: {}, value: {}): {}", 
-                    i + 1, typeAndValue.getColumnName(), typeAndValue.getType(), typeAndValue.getValue(), e.getMessage());
                 throw e;
             }
         }

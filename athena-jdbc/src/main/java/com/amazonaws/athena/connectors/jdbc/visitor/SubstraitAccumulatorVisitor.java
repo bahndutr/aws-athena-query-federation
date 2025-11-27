@@ -108,7 +108,6 @@ public class SubstraitAccumulatorVisitor extends SqlShuttle
             currentColumn = null;
             return literal;
         }
-        
         SqlTypeName typeName = mapArrowTypeToSqlTypeName(arrowField.getType());
         if (literal.getValue() instanceof NlsString) {
             accumulator.add(new SubstraitTypeAndValue(typeName, ((NlsString) literal.getValue()).getValue(), currentColumn));
