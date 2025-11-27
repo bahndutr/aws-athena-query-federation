@@ -57,23 +57,58 @@ public class SubstraitAccumulatorVisitor extends SqlShuttle
     public SqlNode visit(SqlIdentifier id)
     {
         if (id.isSimple()) {
-            currentColumn = id.getSimple();
+            String identifier = id.getSimple();
+            currentColumn = isValidField(identifier) ? identifier : null;
+        }
+        else {
+            // For compound identifiers, try the last part (column name)
+            if (id.names.size() >= 2) {
+                String potentialColumn = id.names.get(id.names.size() - 1);
+                currentColumn = isValidField(potentialColumn) ? potentialColumn : null;
+            }
+            else {
+                currentColumn = null;
+            }
         }
         return super.visit(id);
+    }
+    
+    /**
+     * Helper method to check if identifier is a valid field in schema
+     */
+    private boolean isValidField(String identifier)
+    {
+        try {
+            Field field = schema.findField(identifier);
+            return field != null;
+        }
+        catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     @Override
     public SqlNode visit(SqlLiteral literal)
     {
         if (currentColumn == null) {
-            // such as LIMIT
-            LOGGER.info("literal value {} doesn't have an associated column. skipping", literal.toValue());
             return literal;
         }
-        Field arrowField = schema.findField(currentColumn);
-        if (arrowField == null) {
-            throw new RuntimeException("Column not found in schema: " + currentColumn);
+        
+        // Check if currentColumn is actually a field in the schema
+        Field arrowField = null;
+        try {
+            arrowField = schema.findField(currentColumn);
         }
+        catch (IllegalArgumentException e) {
+            currentColumn = null;
+            return literal;
+        }
+        
+        if (arrowField == null) {
+            currentColumn = null;
+            return literal;
+        }
+        
         SqlTypeName typeName = mapArrowTypeToSqlTypeName(arrowField.getType());
         if (literal.getValue() instanceof NlsString) {
             accumulator.add(new SubstraitTypeAndValue(typeName, ((NlsString) literal.getValue()).getValue(), currentColumn));
@@ -81,6 +116,10 @@ public class SubstraitAccumulatorVisitor extends SqlShuttle
         else {
             accumulator.add(new SubstraitTypeAndValue(typeName, literal.getValue(), currentColumn));
         }
+        
+        // Reset currentColumn after processing to prevent reuse
+        currentColumn = null;
+        
         return new SqlDynamicParam(0, literal.getParserPosition());
     }
 

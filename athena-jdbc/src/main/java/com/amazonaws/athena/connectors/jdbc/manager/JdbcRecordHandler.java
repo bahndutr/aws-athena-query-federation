@@ -84,6 +84,7 @@ import java.sql.Array;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -240,6 +241,78 @@ public abstract class JdbcRecordHandler
     }
 
     /**
+     * Resolves the actual column name in the ResultSet, handling Calcite-generated aliases
+     */
+    /**
+     * Resolves column name and returns null if column doesn't exist
+     */
+    private String resolveColumnName(ResultSet resultSet, String fieldName)
+    {
+        try {
+            ResultSetMetaData metaData = resultSet.getMetaData();
+            int columnCount = metaData.getColumnCount();
+            
+            // First try exact match with column labels (aliases)
+            for (int i = 1; i <= columnCount; i++) {
+                String columnLabel = metaData.getColumnLabel(i);
+                if (fieldName.equals(columnLabel)) {
+                    return columnLabel;
+                }
+            }
+            
+            // Then try with alias pattern (fieldName + "0", fieldName + "1", etc.)
+            for (int i = 1; i <= columnCount; i++) {
+                String columnLabel = metaData.getColumnLabel(i);
+                if (columnLabel.startsWith(fieldName) && columnLabel.matches(fieldName + "\\d+")) {
+                    return columnLabel;
+                }
+            }
+            
+            // Return null if not found (instead of original name)
+            return null;
+        }
+        catch (SQLException e) {
+            LOGGER.warn("Failed to resolve column name for field: {}", fieldName, e);
+            return null;
+        }
+    }
+
+    /**
+     * Creates a null extractor for fields not present in ResultSet
+     */
+    private Extractor createNullExtractor(Types.MinorType fieldType)
+    {
+        switch (fieldType) {
+            case BIT:
+                return (BitExtractor) (Object context, NullableBitHolder dst) -> dst.isSet = 0;
+            case TINYINT:
+                return (TinyIntExtractor) (Object context, NullableTinyIntHolder dst) -> dst.isSet = 0;
+            case SMALLINT:
+                return (SmallIntExtractor) (Object context, NullableSmallIntHolder dst) -> dst.isSet = 0;
+            case INT:
+                return (IntExtractor) (Object context, NullableIntHolder dst) -> dst.isSet = 0;
+            case BIGINT:
+                return (BigIntExtractor) (Object context, NullableBigIntHolder dst) -> dst.isSet = 0;
+            case FLOAT4:
+                return (Float4Extractor) (Object context, NullableFloat4Holder dst) -> dst.isSet = 0;
+            case FLOAT8:
+                return (Float8Extractor) (Object context, NullableFloat8Holder dst) -> dst.isSet = 0;
+            case DECIMAL:
+                return (DecimalExtractor) (Object context, NullableDecimalHolder dst) -> dst.isSet = 0;
+            case DATEDAY:
+                return (DateDayExtractor) (Object context, NullableDateDayHolder dst) -> dst.isSet = 0;
+            case DATEMILLI:
+                return (DateMilliExtractor) (Object context, NullableDateMilliHolder dst) -> dst.isSet = 0;
+            case VARCHAR:
+                return (VarCharExtractor) (Object context, NullableVarCharHolder dst) -> dst.isSet = 0;
+            case VARBINARY:
+                return (VarBinaryExtractor) (Object context, NullableVarBinaryHolder dst) -> dst.isSet = 0;
+            default:
+                return (VarCharExtractor) (Object context, NullableVarCharHolder dst) -> dst.isSet = 0;
+        }
+    }
+
+    /**
      * Creates an Extractor for the given field. In this example the extractor just creates some random data.
      */
     @VisibleForTesting
@@ -247,6 +320,14 @@ public abstract class JdbcRecordHandler
     {
         Types.MinorType fieldType = Types.getMinorTypeForArrowType(field.getType());
         final String fieldName = field.getName();
+        
+        // Resolve actual column name from ResultSet metadata (handles Calcite aliases)
+        final String actualColumnName = resolveColumnName(resultSet, fieldName);
+        
+        // Check if column exists in ResultSet - if not, create null extractor
+        if (actualColumnName == null) {
+            return createNullExtractor(fieldType);
+        }
 
         if (partitionValues.containsKey(fieldName)) {
             return (VarCharExtractor) (Object context, NullableVarCharHolder dst) ->
@@ -260,88 +341,100 @@ public abstract class JdbcRecordHandler
             case BIT:
                 return (BitExtractor) (Object context, NullableBitHolder dst) ->
                 {
-                    boolean value = resultSet.getBoolean(fieldName);
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
+                    boolean value = resultSet.getBoolean(resolvedColumnName);
                     dst.value = value ? 1 : 0;
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case TINYINT:
                 return (TinyIntExtractor) (Object context, NullableTinyIntHolder dst) ->
                 {
-                    dst.value = resultSet.getByte(fieldName);
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
+                    dst.value = resultSet.getByte(resolvedColumnName);
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case SMALLINT:
                 return (SmallIntExtractor) (Object context, NullableSmallIntHolder dst) ->
                 {
-                    dst.value = resultSet.getShort(fieldName);
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
+                    dst.value = resultSet.getShort(resolvedColumnName);
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case INT:
                 return (IntExtractor) (Object context, NullableIntHolder dst) ->
                 {
-                    dst.value = resultSet.getInt(fieldName);
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
+                    dst.value = resultSet.getInt(resolvedColumnName);
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case BIGINT:
                 return (BigIntExtractor) (Object context, NullableBigIntHolder dst) ->
                 {
-                    dst.value = resultSet.getLong(fieldName);
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
+                    dst.value = resultSet.getLong(resolvedColumnName);
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case FLOAT4:
                 return (Float4Extractor) (Object context, NullableFloat4Holder dst) ->
                 {
-                    dst.value = resultSet.getFloat(fieldName);
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
+                    dst.value = resultSet.getFloat(resolvedColumnName);
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case FLOAT8:
                 return (Float8Extractor) (Object context, NullableFloat8Holder dst) ->
                 {
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
                     try {
-                        dst.value = resultSet.getDouble(fieldName);
+                        dst.value = resultSet.getDouble(resolvedColumnName);
                     }
                     catch (java.sql.SQLException ex) {
                         // We need to use Double.parseDouble()
                         // replaceAll() use to strip commas "$25,000.00"
-                        dst.value = Double.parseDouble(resultSet.getString(fieldName).replaceAll(",", "").replaceAll("\\$", ""));
+                        dst.value = Double.parseDouble(resultSet.getString(resolvedColumnName).replaceAll(",", "").replaceAll("\\$", ""));
                     }
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case DECIMAL:
                 return (DecimalExtractor) (Object context, NullableDecimalHolder dst) ->
                 {
-                    dst.value = resultSet.getBigDecimal(fieldName);
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
+                    dst.value = resultSet.getBigDecimal(resolvedColumnName);
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case DATEDAY:
                 return (DateDayExtractor) (Object context, NullableDateDayHolder dst) ->
                 {
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
                     //Issue fix for getting different date (offset by 1) for any dates prior to 1/1/1970.
-                    if (resultSet.getDate(fieldName) != null) {
-                        dst.value = (int) LocalDate.parse(resultSet.getDate(fieldName).toString()).toEpochDay();
+                    if (resultSet.getDate(resolvedColumnName) != null) {
+                        dst.value = (int) LocalDate.parse(resultSet.getDate(resolvedColumnName).toString()).toEpochDay();
                     }
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case DATEMILLI:
                 return (DateMilliExtractor) (Object context, NullableDateMilliHolder dst) ->
                 {
-                    if (resultSet.getTimestamp(fieldName) != null) {
-                        dst.value = resultSet.getTimestamp(fieldName).getTime();
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
+                    if (resultSet.getTimestamp(resolvedColumnName) != null) {
+                        dst.value = resultSet.getTimestamp(resolvedColumnName).getTime();
                     }
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case VARCHAR:
                 return (VarCharExtractor) (Object context, NullableVarCharHolder dst) ->
                 {
-                    if (null != resultSet.getString(fieldName)) {
-                        dst.value = resultSet.getString(fieldName);
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
+                    if (null != resultSet.getString(resolvedColumnName)) {
+                        dst.value = resultSet.getString(resolvedColumnName);
                     }
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             case VARBINARY:
                 return (VarBinaryExtractor) (Object context, NullableVarBinaryHolder dst) ->
                 {
-                    dst.value = resultSet.getBytes(fieldName);
+                    String resolvedColumnName = resolveColumnName(resultSet, fieldName);
+                    dst.value = resultSet.getBytes(resolvedColumnName);
                     dst.isSet = resultSet.wasNull() ? 0 : 1;
                 };
             default:
