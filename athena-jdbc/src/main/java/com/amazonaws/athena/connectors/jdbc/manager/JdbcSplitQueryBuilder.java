@@ -140,17 +140,32 @@ public abstract class JdbcSplitQueryBuilder
             final String columnNames)
             throws SQLException
     {
+        LOGGER.info("=== JDBC QUERY BUILDER DETAILS ===");
+        LOGGER.info("Target table: {}.{}.{}", catalog, schema, table);
+        LOGGER.info("Selected columns: {}", columnNames);
+        LOGGER.info("Table schema fields: {}", tableSchema.getFields().size());
+        
         if (constraints.getQueryPlan() != null) {
-            LOGGER.debug("Processing Substrait query plan ({} bytes)", constraints.getQueryPlan().getSubstraitPlan().length());
-            return prepareStatementWithCalciteSql(jdbcConnection, constraints, getSqlDialect(), split);
+            LOGGER.info("=== SUBSTRAIT QUERY PROCESSING ===");
+            LOGGER.info("Query plan size: {} bytes", constraints.getQueryPlan().getSubstraitPlan().length());
+            SqlDialect sqlDialect = getSqlDialect();
+            LOGGER.info("SQL dialect: {}", sqlDialect.getClass().getSimpleName());
+            return prepareStatementWithCalciteSql(jdbcConnection, constraints, sqlDialect, split);
         }
 
+        LOGGER.info("=== TRADITIONAL CONSTRAINT PROCESSING ===");
         StringBuilder sql = new StringBuilder();
         sql.append("SELECT ");
-        sql.append(columnNames.isEmpty() ? "null" : columnNames);
+        sql.append(columnNames);
+
+        if (columnNames.isEmpty()) {
+            sql.append("null");
+            LOGGER.info("No columns selected, using null");
+        }
         
         String fromClause = getFromClauseWithSplit(catalog, schema, table, split);
         sql.append(fromClause);
+        LOGGER.info("FROM clause: {}", fromClause);
 
         List<TypeAndValue> accumulator = new ArrayList<>();
 
@@ -420,42 +435,34 @@ public abstract class JdbcSplitQueryBuilder
             final Split split)
     {
         try {
+            LOGGER.info("=== SUBSTRAIT QUERY PLAN PROCESSING ===");
+            SqlSelect root;
             List<SubstraitTypeAndValue> accumulator = new ArrayList<>();
+
             String base64EncodedPlan = constraints.getQueryPlan().getSubstraitPlan();
-            LOGGER.debug("Processing Substrait plan with {} dialect", sqlDialect.getClass().getSimpleName());
+            LOGGER.info("Base64 encoded plan length: {} characters", base64EncodedPlan.length());
+            LOGGER.info("SQL dialect: {}", sqlDialect.getClass().getSimpleName());
+            LOGGER.debug("CalciteSql substrait plan: {}", base64EncodedPlan);
 
             SqlNode sqlNode = SubstraitSqlUtils.getSqlNodeFromSubstraitPlan(base64EncodedPlan, sqlDialect);
+            LOGGER.info("Deserialized SQL node type: {}", sqlNode.getClass().getSimpleName());
             
             if (!(sqlNode instanceof SqlSelect)) {
+                LOGGER.error("Unsupported Query Type: {}. Only SELECT Query is supported.", sqlNode.getClass().getSimpleName());
                 throw new RuntimeException("Unsupported Query Type. Only SELECT Query is supported.");
             }
 
-            SqlSelect root = (SqlSelect) sqlNode;
+            root = (SqlSelect) sqlNode;
             Schema tableSchema = SubstraitSqlUtils.getTableSchemaFromSubstraitPlan(base64EncodedPlan, sqlDialect);
+            LOGGER.info("Table schema: {} fields", tableSchema.getFields().size());
             SubstraitAccumulatorVisitor visitor = new SubstraitAccumulatorVisitor(accumulator, split.getProperties(), tableSchema);
             root.accept(visitor);
+            LOGGER.info("Processing SELECT query from Substrait plan");
 
-            String generatedSql = root.toSqlString(sqlDialect).getSql();
-            LOGGER.info("Generated SQL: {}", generatedSql);
-            
-            long parameterCount = generatedSql.chars().filter(ch -> ch == '?').count();
-            if (parameterCount != accumulator.size()) {
-                LOGGER.warn("Parameter count mismatch: SQL has {} placeholders, accumulator has {} parameters", 
-                    parameterCount, accumulator.size());
-            }
-
-            // Check if SQL already contains embedded literals (no parameter placeholders needed)
-            if (parameterCount == 0 && accumulator.size() > 0) {
-                LOGGER.info("SQL contains embedded literals, skipping parameter binding. SQL: {}", generatedSql);
-                // Use the SQL as-is without parameter binding
-                PreparedStatement statement = jdbcConnection.prepareStatement(generatedSql);
-                return statement;
-            }
-
-            PreparedStatement statement = jdbcConnection.prepareStatement(generatedSql);
+            PreparedStatement statement = jdbcConnection.prepareStatement(root.toSqlString(sqlDialect).getSql());
 
             handleDataTypesForPreparedStatement(statement, accumulator, tableSchema);
-            LOGGER.info("CalciteSql prepared statement: {}", statement);
+            LOGGER.debug("CalciteSql prepared statement: {}", statement);
 
             return statement;
         }
@@ -468,14 +475,9 @@ public abstract class JdbcSplitQueryBuilder
     private PreparedStatement handleDataTypesForPreparedStatement(PreparedStatement statement,
             List<SubstraitTypeAndValue> accumulator, Schema tableSchema) throws SQLException
     {
-        LOGGER.debug("Setting {} parameters on PreparedStatement", accumulator.size());
-        
         for (int i = 0; i < accumulator.size(); i++) {
             SubstraitTypeAndValue typeAndValue = accumulator.get(i);
-            LOGGER.debug("Parameter {}: {}={}", i + 1, typeAndValue.getColumnName(), typeAndValue.getValue());
-            
-            try {
-                switch (typeAndValue.getType()) {
+            switch (typeAndValue.getType()) {
                 case BIGINT:
                     statement.setLong(i + 1, ((Number) typeAndValue.getValue()).longValue());
                     break;
@@ -582,12 +584,6 @@ public abstract class JdbcSplitQueryBuilder
                                     FederationSourceErrorCode.OPERATION_NOT_SUPPORTED_EXCEPTION
                                             .toString())
                                     .build());
-            }
-            }
-            catch (SQLException e) {
-                LOGGER.error("Failed to set parameter {} (column: {}, type: {}, value: {}): {}", 
-                    i + 1, typeAndValue.getColumnName(), typeAndValue.getType(), typeAndValue.getValue(), e.getMessage());
-                throw e;
             }
         }
         return statement;

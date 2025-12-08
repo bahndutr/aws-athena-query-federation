@@ -42,7 +42,6 @@ import software.amazon.awssdk.services.glue.model.FederationSourceErrorCode;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 
 /**
  * This class allows you to have a single Lambda function be responsible for both metadata and data operations by
@@ -101,7 +100,6 @@ public class CompositeHandler
         try (BlockAllocatorImpl allocator = new BlockAllocatorImpl()) {
             int resolvedSerDeVersion = SerDeVersion.SERDE_VERSION;
             byte[] allInputBytes = com.google.common.io.ByteStreams.toByteArray(inputStream);
-            System.out.println(new String(allInputBytes, StandardCharsets.UTF_8));
             FederationRequest rawReq = null;
             ObjectMapper objectMapper = null;
             while (resolvedSerDeVersion >= 1) {
