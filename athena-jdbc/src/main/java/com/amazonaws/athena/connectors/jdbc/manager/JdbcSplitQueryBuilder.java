@@ -453,16 +453,18 @@ public abstract class JdbcSplitQueryBuilder
             }
 
             root = (SqlSelect) sqlNode;
+            LOGGER.info("Deserialized SQLSelect: {}", root);
             Schema tableSchema = SubstraitSqlUtils.getTableSchemaFromSubstraitPlan(base64EncodedPlan, sqlDialect);
-            LOGGER.info("Table schema: {} fields", tableSchema.getFields().size());
+            LOGGER.info("Size Table schema: {} fields", tableSchema.getFields().size());
+            LOGGER.info("Table schema: {} fields", tableSchema.getFields());
             SubstraitAccumulatorVisitor visitor = new SubstraitAccumulatorVisitor(accumulator, split.getProperties(), tableSchema);
             root.accept(visitor);
             LOGGER.info("Processing SELECT query from Substrait plan");
-
+            LOGGER.info("root.toSqlString(sqlDialect).getSql(): {}", root.toSqlString(sqlDialect).getSql());
             PreparedStatement statement = jdbcConnection.prepareStatement(root.toSqlString(sqlDialect).getSql());
 
             handleDataTypesForPreparedStatement(statement, accumulator, tableSchema);
-            LOGGER.debug("CalciteSql prepared statement: {}", statement);
+            LOGGER.info("CalciteSql prepared statement: {}", statement);
 
             return statement;
         }
